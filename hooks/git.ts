@@ -133,6 +133,23 @@ function stripGlobals(tokens: string[]): string[] {
   return out
 }
 
+function gitVerb(tokens: string[]): number {
+  let i = 1
+  while (i < tokens.length && (tokens[i] ?? '').startsWith('-')) {
+    if (tokens[i] === '-C' || tokens[i] === '-c') i++
+    i++
+  }
+  return i
+}
+
+function gitReadOnly(verb: string, rest: string[]): boolean {
+  if (!verb || READ_ONLY_GIT.has(verb)) return true
+  if (verb === 'stash') return ['list', 'show'].includes(rest[0] ?? '')
+  if (verb === 'branch') return rest.every(t => t.startsWith('-'))
+  if (verb === 'tag') return rest.length === 0 || rest.some(t => /^(-l|--list|-n\d*|--contains|--points-at|--merged|--no-merged|-v|--verify)$/.test(t))
+  return false
+}
+
 export function chainOf(command: string): { size: number; and: boolean } {
   const seps: string[] = []
   const size = segments(command, seps).length
@@ -145,17 +162,10 @@ export function gitActions(command: string): GitAction[] {
     const tokens = stripGlobals(raw)
     const head = tokens[0]?.split('/').pop()
     if (head === 'git') {
-      let i = 1
-      while (i < tokens.length && (tokens[i] ?? '').startsWith('-')) {
-        if (tokens[i] === '-C' || tokens[i] === '-c') i++
-        i++
-      }
+      const i = gitVerb(tokens)
       const verb = tokens[i] ?? ''
-      if (READ_ONLY_GIT.has(verb)) continue
-      if (verb === 'stash' && ['list', 'show'].includes(tokens[i + 1] ?? '')) continue
-      if (verb === 'branch' && (tokens.length <= i + 1 || tokens.slice(i + 1).every(t => t.startsWith('-')))) continue
       const rest = tokens.slice(i + 1)
-      if (verb === 'tag' && (rest.length === 0 || rest.some(t => /^(-l|--list|-n\d*|--contains|--points-at|--merged|--no-merged|-v|--verify)$/.test(t)))) continue
+      if (gitReadOnly(verb, rest)) continue
       const spec = verb === 'checkout' && rest.includes('--') ? GIT_VERBS.restore : GIT_VERBS[verb]
       if (spec) out.push({ kind: `git ${verb}`, ...spec })
     } else if (head === 'gh') {
@@ -201,7 +211,10 @@ export function readOnly(command: string): boolean {
     const tokens = stripGlobals(raw)
     const head = tokens[0]?.split('/').pop() ?? ''
     if (head === 'cd' || head === 'echo' || head === 'printf' || head === 'true' || head === 'pwd') return true
-    if (head === 'git') return gitActions(tokens.join(' ')).length === 0
+    if (head === 'git') {
+      const i = gitVerb(tokens)
+      return gitReadOnly(tokens[i] ?? '', tokens.slice(i + 1))
+    }
     if (head === 'sed') return !tokens.some(t => /^-i/.test(t))
     if (head === 'find' || head === 'fd' || head === 'fdfind') return !tokens.some(t => WRITE_FLAGS.test(t))
     return READERS.has(head)

@@ -583,7 +583,8 @@ async function afterBash($: EngineInterface, jobs: Job[]): Promise<void> {
   const before = dirty.root === t.root ? dirty.files : {}
   if (jobs.some(j => j.initRepo)) await detectRepo($)
   else if (!t.top && (await exists($, join(t.root, '.git')))) await detectRepo($)
-  if ((await get($)).top) await refreshGit($)
+  const probed = await get($)
+  if (probed.top && (writes || probed.top !== t.top)) await refreshGit($)
   const fresh = await get($)
   const ignored = new Set(fresh.ignored)
   const tones: Record<string, string> = {}
@@ -894,7 +895,7 @@ export const register: Register = (on, options) => {
     if (e.tool === 'Bash') {
       const out: Partial<BuiltinToolResults['Bash']> = !result.isError && result.result && typeof result.result === 'object' ? result.result : {}
       const reads = showReads ? readTargets(command, cwd, typeof out.stdout === 'string' ? out.stdout : '', home) : []
-      const job: Job = { actions: [], since, initRepo: actions.some(a => a.init), readOnly: quiet }
+      const job: Job = { actions: [], since, initRepo: actions.some(a => a.init), readOnly: quiet || result.isReadOnly === true }
       if (out.backgroundTaskId) background.set(out.backgroundTaskId, { p: pending, job, reads })
       else void (async () => {
         const results = pending ? await outcomes($, pending, !result.isError, out.gitOperation) : []

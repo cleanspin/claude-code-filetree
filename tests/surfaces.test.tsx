@@ -544,3 +544,28 @@ test('git activity is only certified by evidence: HEAD for commits, the exit cod
   expect(await texts(ui)).toContain('fetched')
   await ui.unmount()
 })
+
+test('unknown git verbs count as writers and read-only commands skip git work', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const root = '/home/k/proj'
+  const w: World = { os: 'linux', env: { HOME: '/home/k' }, cwd: root, top: root, dirs: { [root]: [['README.md', 'file'], ['gone.txt', 'file']] }, status: '## main\0', numstat: '' }
+  const clock = world(on, w, ran)
+  await $.session.start({ cwd: root, surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: paneProps(60) })
+  const statuses = () => ran.filter(a => a[0] === 'git' && a.includes('status')).length
+  let before = statuses()
+  await $.tool.call({ tool: 'Bash', command: 'cat README.md' } as any)
+  await $.tool.call({ tool: 'Bash', command: 'git status' } as any)
+  await clock.settle()
+  expect(statuses()).toBe(before)
+  expect(ran.some(a => a[0] === 'find')).toBe(false)
+  w.dirs[root] = [['README.md', 'file']]
+  before = statuses()
+  await $.tool.call({ tool: 'Bash', command: 'git clean -fd' } as any)
+  await clock.settle()
+  expect(statuses()).toBeGreaterThan(before)
+  expect(ran.some(a => a[0] === 'find')).toBe(true)
+  expect(await texts(ui)).not.toContain('gone.txt')
+  await ui.unmount()
+})
