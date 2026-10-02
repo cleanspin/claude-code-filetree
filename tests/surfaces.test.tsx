@@ -305,7 +305,7 @@ test('watches only git metadata, copies paths, clears search, Home and End', { t
   const copied: string[] = []
   on('ui.copy', (_$: any, e: any) => {
     copied.push(e.text)
-    return { value: true }
+    return { value: { isCopied: true } }
   })
   on('classic.SessionStart', () => ({}))
   on('classic.FileChanged', () => ({}))

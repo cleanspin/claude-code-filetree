@@ -552,7 +552,7 @@ async function copyPath($: EngineInterface, id: string, absolute: boolean, surfa
   const t = await get($)
   const text = !absolute && id !== t.root && inside(t.root, id) ? id.slice(t.root.endsWith('/') ? t.root.length : t.root.length + 1) : id
   const done = await $.ui.copy({ text, ...(surface ? { surface: surface as 'terminal' } : {}) })
-  $.ui.toast(done ? `Copied ${text}` : 'Could not copy the path')
+  $.ui.toast(done.isCopied ? `Copied ${text}` : 'Could not copy the path')
 }
 
 async function exists($: EngineInterface, path: string): Promise<boolean> {
