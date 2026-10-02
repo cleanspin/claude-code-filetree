@@ -63,9 +63,10 @@ jobs:
             if (process.platform === "win32") {
               console.log("OS env:", process.env.OS, "USERPROFILE:", process.env.USERPROFILE)
               console.log("find on PATH:", cp.execFileSync("where.exe", ["find"]).toString().trim().split("\n")[0])
-              const target = path.join(dir, "sub", "old.txt")
-              const r = cp.spawnSync("cmd", ["/c", "start", "", target], { timeout: 10000 })
-              console.log("cmd /c start exit:", r.status)
+              const target = path.join(dir, "sub", "a&calc&%USERNAME%.txt")
+              fs.writeFileSync(target, "c")
+              const r = cp.spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", "Invoke-Item -LiteralPath $env:FILETREE_OPEN"], { timeout: 10000, env: { ...process.env, FILETREE_OPEN: target } })
+              console.log("powershell Invoke-Item exit:", r.status, String(r.stderr).trim())
               if (r.status !== 0) throw new Error("opener failed")
             }
             const git = cp.execFileSync("git", ["--no-optional-locks", "-C", process.cwd(), "status", "--porcelain=v1", "-b", "-z", "--ignored=traditional", "--untracked-files=normal", "--", "."]).toString()

@@ -707,10 +707,11 @@ async function openFile($: EngineInterface, path: string): Promise<void> {
     os === 'darwin'
       ? ['open', path]
       : os === 'win32'
-        ? ['cmd', '/c', 'start', '', path.replace(/\//g, '\\')]
+        ? ['powershell', '-NoProfile', '-NonInteractive', '-Command', 'Invoke-Item -LiteralPath $env:FILETREE_OPEN']
         : ['setsid', '-f', 'sh', '-c', 'if command -v gio >/dev/null; then exec gio open "$1"; else exec xdg-open "$1"; fi </dev/null >/dev/null 2>&1', 'sh', path]
   try {
-    await $.process.run(argv, { timeoutMs: 10_000 })
+    const run = await $.process.run(argv, os === 'win32' ? { timeoutMs: 10_000, env: { FILETREE_OPEN: path.replace(/\//g, '\\') } } : { timeoutMs: 10_000 })
+    if (run.exitCode !== 0) $.ui.toast(`could not open ${path} with ${argv[0] ?? ''}: ${run.stderr.trim().split('\n')[0] || `exit ${run.exitCode}`}`)
   } catch {
     $.ui.toast(`could not open ${path} with ${argv[0] ?? ''}`)
   }

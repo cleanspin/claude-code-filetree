@@ -10,9 +10,11 @@ type World = {
   dirs: Record<string, [string, 'file' | 'dir'][]>
   status: string
   numstat: string
+  exits?: Record<string, [number, string]>
 }
 type Ran = string[][]
 const opens: unknown[] = []
+const envs: Record<string, string>[] = []
 
 function world(on: any, w: World, ran: Ran) {
   mock.env(on, w.env)
@@ -51,7 +53,10 @@ function world(on: any, w: World, ran: Ran) {
   on('process.run', (_$: any, e: any) => {
     const argv: string[] = [...e.argv]
     ran.push(argv)
+    if (e.init?.env) envs.push(e.init.env)
     const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    const exit = w.exits?.[argv[0] ?? '']
+    if (exit) return { value: { exitCode: exit[0], stdout: '', stderr: exit[1], isStdoutTruncated: false, isStderrTruncated: false } }
     if (argv[0] === 'uname') return ok(w.os === 'darwin' ? 'Darwin\n' : 'Linux\n')
     if (argv[0] === 'sh') return ok('missing\n')
     if (argv[0] === 'git') {
@@ -130,12 +135,12 @@ test('macOS outside a repo: write scan uses find -newer marker, not GNU -newermt
   expect(find).not.toContain('-newermt')
 })
 
-test('Windows: backslash paths shimmer, open uses cmd start, no find or sh', { timeoutMs: 20_000 }, async ($, on) => {
+test('Windows: backslash paths shimmer, open hands the path to PowerShell as data, no find, sh or cmd', { timeoutMs: 20_000 }, async ($, on) => {
   const ran: Ran = []
   const root = 'C:/Users/k/proj'
   const clock = world(on, {
     os: 'win32', env: { OS: 'Windows_NT', USERPROFILE: 'C:\\Users\\k' }, cwd: 'C:\\Users\\k\\proj', top: root,
-    dirs: { [root]: [['src', 'dir'], ['README.md', 'file']], [`${root}/src`]: [['a.ts', 'file']] },
+    dirs: { [root]: [['src', 'dir'], ['README.md', 'file'], ['a&calc&%USERNAME%.txt', 'file']], [`${root}/src`]: [['a.ts', 'file']] },
     status: '## main\0 M src/a.ts\0', numstat: '1\t0\tsrc/a.ts\0',
   }, ran)
   await $.session.start({ cwd: 'C:\\Users\\k\\proj', surface: 'terminal', isInteractive: true })
@@ -150,11 +155,12 @@ test('Windows: backslash paths shimmer, open uses cmd start, no find or sh', { t
   expect(shown).toContain('+1')
   await $.tool.call({ tool: 'Bash', command: 'echo x >> src/a.ts' } as any)
   await clock.settle()
-  await ui.post({ press: `${root}/README.md` }, { in: 'rows' })
-  await ui.post({ press: `${root}/README.md` }, { in: 'rows' })
+  await ui.post({ press: `${root}/a&calc&%USERNAME%.txt` }, { in: 'rows' })
+  await ui.post({ press: `${root}/a&calc&%USERNAME%.txt` }, { in: 'rows' })
   await clock.settle()
-  expect(ran).toContainEqual(['cmd', '/c', 'start', '', 'C:\\Users\\k\\proj\\README.md'])
-  expect(ran.some(a => ['find', 'sh', 'uname', 'setsid', 'touch'].includes(a[0] ?? ''))).toBe(false)
+  expect(ran).toContainEqual(['powershell', '-NoProfile', '-NonInteractive', '-Command', 'Invoke-Item -LiteralPath $env:FILETREE_OPEN'])
+  expect(envs.at(-1)).toEqual({ FILETREE_OPEN: 'C:\\Users\\k\\proj\\a&calc&%USERNAME%.txt' })
+  expect(ran.some(a => ['find', 'sh', 'uname', 'setsid', 'touch', 'cmd'].includes(a[0] ?? ''))).toBe(false)
   await ui.unmount()
 })
 
@@ -364,5 +370,20 @@ test('after /clear the tree rebuilds itself, keeps a pinned folder, and an empty
   const shown = await texts(ui)
   expect(shown).toContain(`"id":"${root}/sub/b.ts"`)
   expect(shown).not.toContain(`"id":"${root}/a.ts"`)
+  await ui.unmount()
+})
+
+test('opener failures show a toast instead of failing silently', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const root = '/Users/k/proj'
+  const clock = world(on, { os: 'darwin', env: { HOME: '/Users/k' }, cwd: root, top: '', dirs: { [root]: [['a.xyz', 'file']] }, status: '', numstat: '', exits: { open: [1, 'No application knows how to open a.xyz\n'] } }, ran)
+  await $.session.start({ cwd: root, surface: 'desktop', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetree', surface: 'desktop', component: 'Pane', requestId: 'filetree', props: paneProps(60) })
+  await ui.post({ press: `${root}/a.xyz` }, { in: 'rows' })
+  await ui.post({ press: `${root}/a.xyz` }, { in: 'rows' })
+  await clock.settle()
+  expect(ran).toContainEqual(['open', `${root}/a.xyz`])
+  expect(ran.some(a => a[0] === 'toast' && (a[1] ?? '').includes('No application knows how to open a.xyz'))).toBe(true)
   await ui.unmount()
 })
