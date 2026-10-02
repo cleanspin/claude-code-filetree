@@ -16,11 +16,7 @@
 </p>
 
 > [!NOTE]
-> filetree is a Claude Code **mod**: a plugin of function hooks with its own pane. Mods need **Claude Code 2.1.287 or newer**.
->
-> filetree lives in the sidebar on the right, full height and resizable. That needs Claude Code's **fullscreen** layout (`/tui fullscreen`, or `"tui": "fullscreen"` in `~/.claude/settings.json`) and a terminal at least 110 columns wide; tmux keeps Claude Code out of fullscreen unless you turn it on. In the default layout filetree stays hidden instead of sitting above the prompt, and `/filetree` tells you how to switch. Works the same in any terminal; tested in Ghostty, Alacritty and foot.
->
-> Tested by hand in the terminal on Linux. macOS, the Code tab of the Claude Desktop app and Windows are covered by `claude plugin test` (see `tests/`) in CI. Mods do not load in WSL sessions of the Desktop app.
+> filetree is a Claude Code **mod** and needs **Claude Code 2.1.287+**. It shows in the right sidebar, which needs the fullscreen layout (`/tui fullscreen`) and a terminal at least 110 columns wide. Tested on Linux, macOS and Windows; mods don't load in WSL sessions of the Desktop app.
 
 ---
 
