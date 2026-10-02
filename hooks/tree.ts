@@ -251,11 +251,8 @@ export function underAny(id: string, set: Set<string>, root: string): boolean {
 
 export function ancestorsOf(id: string, root: string): string[] {
   const out: string[] = []
-  let dir = dirname(id)
-  while (dir.startsWith(root) && dir !== root) {
-    out.push(dir)
-    dir = dirname(dir)
-  }
+  if (!root) return out
+  for (let dir = dirname(id), prev = id; dir !== prev && dir !== root && inside(root, dir); prev = dir, dir = dirname(dir)) out.push(dir)
   return out
 }
 

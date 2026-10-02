@@ -80,6 +80,7 @@ let home = ''
 let platform: Promise<'linux' | 'darwin' | 'win32'> | null = null
 let dirty: { root: string; files: Record<string, Change> } = { root: '', files: {} }
 let markId = 0
+let lastRoot = ''
 
 function osName($: EngineInterface): Promise<'linux' | 'darwin' | 'win32'> {
   platform ??= (async () => {
@@ -245,6 +246,7 @@ async function reset($: EngineInterface, root: string, focus = false): Promise<v
   generation += 1
   blink?.cancel()
   blink = null
+  lastRoot = root
   await put($, () => ({ ...emptyTree(root), showHidden: keepHidden }))
   const title = `Files: ${root.split('/').pop() || root}`
   if (focus) await $.ui.open({ id: PANE, title, focus: true })
@@ -587,6 +589,7 @@ function scheduleScan($: EngineInterface, job: Job): void {
 async function touched($: EngineInterface, paths: string[], tone: string, show: boolean): Promise<void> {
   if (await followCwd($)) return
   const t = await get($)
+  if (!t.root) return
   const within = paths.map(posix).filter(p => inside(t.root, p))
   if (within.length === 0) return
   if (tone !== 'purple') {
@@ -740,6 +743,14 @@ async function openNode($: EngineInterface, n: FileNode): Promise<void> {
   } else await openFile($, n.id)
 }
 
+async function loadTheme($: EngineInterface): Promise<void> {
+  try {
+    await $.state.set(THEME, parseTheme(String(await $.fs.read(`${(await $.env.get('HOME')) ?? ''}/${THEME_FILE}`))))
+  } catch {
+    await $.state.set(THEME, DEFAULT_THEME)
+  }
+}
+
 function shortPath(path: string): string {
   return home && inside(home, path) ? `~${path.slice(home.length)}` : path
 }
@@ -763,11 +774,7 @@ export const register: Register = (on, options) => {
       } catch {
         noNerd = true
       }
-      try {
-        await $.state.set(THEME, parseTheme(String(await $.fs.read(`${(await $.env.get('HOME')) ?? ''}/${THEME_FILE}`))))
-      } catch {
-        await $.state.set(THEME, DEFAULT_THEME)
-      }
+      await loadTheme($)
       const t = await get($)
       if (t.flashOn) await patch($, () => ({ flash: [], flashDim: [], flashOn: false, flashTones: {} }))
       await setActivities($, cur => cur.map(a => (a.state === 'running' ? { ...a, state: 'failed', label: `${a.kind} interrupted` } : a)))
@@ -887,6 +894,14 @@ export const register: Register = (on, options) => {
 
   on('classic.SessionStart', async ($, e, next) => {
     const result = await next(e)
+    if (e.source === 'clear' || e.source === 'resume' || e.source === 'fork') {
+      void (async () => {
+        await loadTheme($)
+        const root = follow || !lastRoot ? await cwdOf($) : lastRoot
+        const t = await get($)
+        if (t.root !== root || t.nodes.length === 0) await reset($, root)
+      })()
+    }
     const gd = await gitDir($, posix(e.cwd))
     return gd ? { ...result, watchPaths: [...(result.watchPaths ?? []), join(gd, 'index'), join(gd, 'HEAD')] } : result
   })

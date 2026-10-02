@@ -1,6 +1,16 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-type World = { os: 'darwin' | 'linux' | 'win32'; env: Record<string, string>; cwd: string; top: string; dirs: Record<string, [string, 'file' | 'dir'][]>; status: string; numstat: string }
+import { ancestorsOf } from '../hooks/tree'
+
+type World = {
+  os: 'darwin' | 'linux' | 'win32'
+  env: Record<string, string>
+  cwd: string
+  top: string
+  dirs: Record<string, [string, 'file' | 'dir'][]>
+  status: string
+  numstat: string
+}
 type Ran = string[][]
 const opens: unknown[] = []
 
@@ -329,5 +339,30 @@ test('sidebar only: no pane in the default layout, and an inline pane closes its
   const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: { ...paneProps(60), placement: 'inline' } })
   await clock.settle()
   expect(closed.length).toBeGreaterThan(0)
+  await ui.unmount()
+})
+
+const fullscreen = (args: string) => ({ command: 'filetree', args, origin: { kind: 'person' }, presentation: { isFullscreen: true, columns: 200 } }) as any
+
+test('after /clear the tree rebuilds itself, keeps a pinned folder, and an empty root never loops', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const root = '/home/k/proj'
+  const clock = world(on, { os: 'linux', env: { HOME: '/home/k' }, cwd: root, top: '', dirs: { [root]: [['a.ts', 'file'], ['sub', 'dir']], [`${root}/sub`]: [['b.ts', 'file']] }, status: '', numstat: '' }, ran)
+  on('classic.SessionStart', () => ({}))
+  expect(ancestorsOf('/repo/a.ts', '')).toEqual([])
+  expect(ancestorsOf('/repo2/a.ts', '/repo')).toEqual([])
+  const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: paneProps(60) })
+  await $.tool.call({ tool: 'Read', file_path: `${root}/a.ts` } as any)
+  await clock.settle()
+  await $.classic.SessionStart({ source: 'clear', cwd: root } as any)
+  await clock.settle()
+  expect(await texts(ui)).toContain(`"id":"${root}/a.ts"`)
+  await $.command.run(fullscreen(`${root}/sub`))
+  await clock.settle()
+  await $.classic.SessionStart({ source: 'clear', cwd: root } as any)
+  await clock.settle()
+  const shown = await texts(ui)
+  expect(shown).toContain(`"id":"${root}/sub/b.ts"`)
+  expect(shown).not.toContain(`"id":"${root}/a.ts"`)
   await ui.unmount()
 })
