@@ -18,6 +18,7 @@ import {
   parseNumstat,
   parseTheme,
   posix,
+  relative,
   dropBelow,
   useDrives,
   rollCounts,
@@ -260,6 +261,7 @@ async function reset($: EngineInterface, root: string, focus = false): Promise<v
   blink?.cancel()
   blink = null
   lastRoot = root
+  searchIndex = null
   await put($, () => ({ ...emptyTree(root), showHidden: keepHidden }))
   const title = `Files: ${root.split('/').pop() || root}`
   if (focus) await $.ui.open({ id: PANE, title, focus: true })
@@ -585,6 +587,7 @@ async function afterBash($: EngineInterface, jobs: Job[]): Promise<void> {
   else if (!t.top && (await exists($, join(t.root, '.git')))) await detectRepo($)
   const probed = await get($)
   if (probed.top && (writes || probed.top !== t.top)) await refreshGit($)
+  if (writes) searchIndex = null
   const fresh = await get($)
   const ignored = new Set(fresh.ignored)
   const tones: Record<string, string> = {}
@@ -661,6 +664,7 @@ async function touched($: EngineInterface, paths: string[], tone: string, show: 
   const within = paths.map(posix).filter(p => inside(t.root, p))
   if (within.length === 0) return
   if (tone !== 'purple') {
+    searchIndex = null
     await revealPaths($, within.map(dirname))
     await loadDirs($, [...new Set(within.map(dirname))].filter(d => inside(t.root, d)))
     await refreshGit($)
@@ -734,9 +738,13 @@ async function search($: EngineInterface, query: string): Promise<string[]> {
   const q = query.trim().toLowerCase()
   if (!q) return []
   const t = await get($)
-  const hits = (await indexPaths($, t)).filter(p => p.slice(t.root.length + 1).toLowerCase().includes(q)).slice(0, SEARCH_REVEAL_LIMIT)
+  const hits = (await indexPaths($, t)).filter(p => relative(t.root, p).toLowerCase().includes(q)).slice(0, SEARCH_REVEAL_LIMIT)
   if ((await get($)).query !== query) return []
   await revealPaths($, hits)
+  const shown = await get($)
+  const ids = new Set(shown.nodes.map(n => n.id))
+  const stale = [...new Set(hits.filter(p => !ids.has(p)).map(dirname))].filter(d => inside(shown.root, d))
+  if (stale.length) await loadDirs($, stale)
   return hits
 }
 
@@ -1238,9 +1246,11 @@ export const register: Register = (on, options) => {
               onPress={() =>
                 void (async () => {
                   const cur = await get($)
+                  searchIndex = null
                   await loadDirs($, [cur.root, ...cur.expanded])
                   await detectRepo($)
                   await refreshGit($)
+                  if (cur.query.trim()) await search($, cur.query)
                 })()
               }
             />

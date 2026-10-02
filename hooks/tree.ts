@@ -268,6 +268,10 @@ export function ancestorsOf(id: string, root: string): string[] {
   return out
 }
 
+export function relative(root: string, path: string): string {
+  return path === root ? '' : path.slice(root.endsWith('/') ? root.length : root.length + 1)
+}
+
 export function visibleRows(t: FileTree): Row[] {
   const kids = new Map<string, FileNode[]>()
   for (const n of t.nodes) {
@@ -281,7 +285,7 @@ export function visibleRows(t: FileTree): Row[] {
   if (q) {
     keep = new Set()
     for (const n of t.nodes) {
-      if (!n.name.toLowerCase().includes(q)) continue
+      if (!relative(t.root, n.id).toLowerCase().includes(q)) continue
       keep.add(n.id)
       for (const a of ancestorsOf(n.id, t.root)) keep.add(a)
     }

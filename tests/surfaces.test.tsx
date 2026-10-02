@@ -569,3 +569,24 @@ test('unknown git verbs count as writers and read-only commands skip git work', 
   expect(await texts(ui)).not.toContain('gone.txt')
   await ui.unmount()
 })
+
+test('search matches relative paths and refresh picks up files added since the index was built', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const root = '/home/k/proj'
+  const w: World = { os: 'linux', env: { HOME: '/home/k' }, cwd: root, top: root, dirs: { [root]: [['src', 'dir'], ['alpha.txt', 'file']], [`${root}/src`]: [['a.ts', 'file']] }, status: '## main\0', numstat: '' }
+  const clock = world(on, w, ran)
+  await $.session.start({ cwd: root, surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: paneProps(60) })
+  await ui.input({ key: 'q', text: 'src/a.ts', kind: 'change' })
+  await clock.settle()
+  expect(await texts(ui)).toContain(`"id":"${root}/src/a.ts"`)
+  await ui.input({ key: 'q', text: 'alpha', kind: 'change' })
+  await clock.settle()
+  w.dirs[`${root}/src`] = [['a.ts', 'file'], ['beta.ts', 'file']]
+  await ui.press({ key: 'refresh' })
+  await ui.input({ key: 'q', text: 'beta', kind: 'change' })
+  await clock.settle()
+  expect(await texts(ui)).toContain(`"id":"${root}/src/beta.ts"`)
+  await ui.unmount()
+})
