@@ -444,3 +444,28 @@ test('replacing many folders in one batch keeps unchanged nodes and drops what v
   expect(out.map(n => n.id).sort()).toEqual(['/r/a', '/r/a/w', '/r/b'])
   expect(out.find(n => n.id === '/r/b')?.loaded).toBe(true)
 })
+
+test('a cwd change moves the tree and drops the old selection before the next prompt', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const a = '/home/k/repo-a'
+  const b = '/home/k/repo-b'
+  const c = '/home/k/repo-c'
+  const w: World = { os: 'linux', env: { HOME: '/home/k' }, cwd: a, top: '', dirs: { [a]: [['a.txt', 'file']], [b]: [['b.txt', 'file']], [c]: [['c.txt', 'file']] }, status: '', numstat: '' }
+  const clock = world(on, w, ran)
+  on('classic.CwdChanged', () => ({}))
+  await $.session.start({ cwd: a, surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: paneProps(60) })
+  await ui.post({ press: `${a}/a.txt` }, { in: 'rows' })
+  await clock.settle()
+  w.cwd = b
+  const sent = await $.prompt.submit({ text: 'what is this?', wait: false } as any)
+  expect(JSON.stringify(sent)).not.toContain(`${a}/a.txt`)
+  await clock.settle()
+  expect(await texts(ui)).toContain('b.txt')
+  w.cwd = c
+  await $.classic.CwdChanged({ old_cwd: b, new_cwd: c } as any)
+  await clock.settle()
+  expect(await texts(ui)).toContain('c.txt')
+  await ui.unmount()
+})

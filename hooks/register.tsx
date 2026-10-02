@@ -919,6 +919,12 @@ export const register: Register = (on, options) => {
     return gd ? { ...result, watchPaths: [...(result.watchPaths ?? []), join(gd, 'index'), join(gd, 'HEAD')] } : result
   })
 
+  on('classic.CwdChanged', async ($, e, next) => {
+    const result = await next(e)
+    void followCwd($)
+    return result
+  })
+
   on('classic.FileChanged', async ($, e, next) => {
     const result = await next(e)
     if (/[\\/]\.git[\\/]|[\\/](index|HEAD)$/.test(e.file_path)) $.clock.after(300, () => void sync($, true))
@@ -939,7 +945,7 @@ export const register: Register = (on, options) => {
   })
 
   on('prompt.submit', async ($, e, next) => {
-    void sync($)
+    if (!(await followCwd($))) void sync($)
     const t = await get($)
     const context = [...(e.context ?? [])]
     if (t.selected && (await exists($, t.selected))) context.push(`The user has this file selected in the file tree; "this" or "it" in the prompt likely refers to it: ${t.selected}`)
