@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { ancestorsOf } from '../hooks/tree'
+import { ancestorsOf, replaceChildren, toNodes } from '../hooks/tree'
 
 type World = {
   os: 'darwin' | 'linux' | 'win32'
@@ -11,6 +11,8 @@ type World = {
   status: string
   numstat: string
   exits?: Record<string, [number, string]>
+  delays?: Record<string, number[]>
+  denied?: string[]
 }
 type Ran = string[][]
 const opens: unknown[] = []
@@ -37,10 +39,15 @@ function world(on: any, w: World, ran: Ran) {
   })
   const norm = (p: string) => p.replace(/\\/g, '/').replace(/^.*?(?=[A-Za-z]:\/)/, '')
   const dirOf = (p: string) => w.dirs[p] ?? w.dirs[p.replace(/^[A-Za-z]:/, '')]
-  on('fs.list', (_$: any, e: any) => {
-    const kids = dirOf(norm(e.path))
+  on('fs.list', async (_$: any, e: any) => {
+    const path = norm(e.path)
+    if (w.denied?.includes(path)) return { deny: `EACCES: permission denied, scandir '${path}'` }
+    const kids = dirOf(path)
     if (!kids) throw new Error(`ENOENT ${e.path}`)
-    return { value: kids.map(([name, kind]) => ({ name, kind, size: 1, mtimeMs: 1_700_000_000_000, isLink: false })) }
+    const value = kids.map(([name, kind]) => ({ name, kind, size: 1, mtimeMs: 1_700_000_000_000, isLink: false }))
+    const delay = w.delays?.[path]?.shift()
+    if (delay) await clock.sleep(delay)
+    return { value }
   })
   on('fs.stat', (_$: any, e: any) => {
     const p = norm(e.path)
@@ -386,4 +393,54 @@ test('opener failures show a toast instead of failing silently', { timeoutMs: 20
   expect(ran).toContainEqual(['open', `${root}/a.xyz`])
   expect(ran.some(a => a[0] === 'toast' && (a[1] ?? '').includes('No application knows how to open a.xyz'))).toBe(true)
   await ui.unmount()
+})
+
+test('an older directory listing never overwrites a newer one', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const root = '/home/k/scratch'
+  const w: World = { os: 'linux', env: { HOME: '/home/k' }, cwd: root, top: '', dirs: { [root]: [['old.txt', 'file']] }, status: '', numstat: '', delays: {} }
+  const clock = world(on, w, ran)
+  await $.session.start({ cwd: root, surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: paneProps(60) })
+  w.delays = { [root]: [1_000] }
+  await ui.press({ key: 'refresh' })
+  w.dirs[root] = [['new.txt', 'file']]
+  await ui.press({ key: 'refresh' })
+  await clock.settle()
+  expect(await texts(ui)).toContain('new.txt')
+  await clock.advance(1_500)
+  const shown = await texts(ui)
+  expect(shown).toContain('new.txt')
+  expect(shown).not.toContain('old.txt')
+  await ui.unmount()
+})
+
+test('a listing error keeps the cached rows and says so', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const root = '/home/k/scratch'
+  const w: World = { os: 'linux', env: { HOME: '/home/k' }, cwd: root, top: '', dirs: { [root]: [['a.txt', 'file']] }, status: '', numstat: '' }
+  const clock = world(on, w, ran)
+  await $.session.start({ cwd: root, surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: paneProps(60) })
+  w.denied = [root]
+  await ui.press({ key: 'refresh' })
+  await clock.settle()
+  expect(await texts(ui)).toContain(`"id":"${root}/a.txt"`)
+  expect(ran.some(a => a[0] === 'toast' && (a[1] ?? '').includes('could not list'))).toBe(true)
+  await ui.unmount()
+})
+
+test('replacing many folders in one batch keeps unchanged nodes and drops what vanished', async () => {
+  const dir = (id: string, loaded: boolean) => ({ id, parent: id.slice(0, id.lastIndexOf('/')) || '/', name: id.slice(id.lastIndexOf('/') + 1), kind: 'dir' as const, hidden: false, mtime: 0, loaded })
+  const file = (id: string) => ({ ...dir(id, false), kind: 'file' as const })
+  const nodes = [dir('/r/a', true), dir('/r/b', true), file('/r/a/x'), dir('/r/b/y', true), file('/r/b/y/z')]
+  const out = replaceChildren(nodes, new Map([
+    ['/r/a', toNodes('/r/a', [{ name: 'w', kind: 'file', mtimeMs: 0, isLink: false }])],
+    ['/r/b', []],
+    ['/r/b/y', toNodes('/r/b/y', [{ name: 'z', kind: 'file', mtimeMs: 0, isLink: false }])],
+  ]))
+  expect(out.map(n => n.id).sort()).toEqual(['/r/a', '/r/a/w', '/r/b'])
+  expect(out.find(n => n.id === '/r/b')?.loaded).toBe(true)
 })

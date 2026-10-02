@@ -104,16 +104,28 @@ export function toNodes(dir: string, list: Entry[]): FileNode[] {
     .sort((a, b) => (a.kind === 'dir' ? 0 : 1) - (b.kind === 'dir' ? 0 : 1) || collator.compare(a.name, b.name))
 }
 
-export function replaceChildren(nodes: FileNode[], dir: string, kids: FileNode[]): FileNode[] {
-  const keep = new Map(nodes.filter(n => n.parent === dir).map(n => [n.id, n]))
-  const fresh = kids.map(k => {
-    const old = keep.get(k.id)
-    return old && old.kind === 'dir' && k.kind === 'dir' ? { ...k, loaded: old.loaded } : k
-  })
-  const freshIds = new Set(fresh.map(k => k.id))
-  const gone = [...keep.keys()].filter(id => !freshIds.has(id))
-  const out = nodes.filter(n => n.parent !== dir && !gone.some(g => n.id.startsWith(g + '/')))
-  return [...out.map(n => (n.id === dir ? { ...n, loaded: true } : n)), ...fresh]
+export function replaceChildren(nodes: FileNode[], listed: Map<string, FileNode[]>): FileNode[] {
+  if (listed.size === 0) return nodes
+  const keep = new Map<string, FileNode>()
+  for (const n of nodes) if (listed.has(n.parent)) keep.set(n.id, n)
+  const freshIds = new Set<string>()
+  for (const kids of listed.values()) for (const k of kids) freshIds.add(k.id)
+  const gone = new Set([...keep.keys()].filter(id => !freshIds.has(id)))
+  const under = (id: string) => {
+    if (gone.size === 0) return false
+    for (let dir = dirname(id), prev = id; dir !== prev; prev = dir, dir = dirname(dir)) if (gone.has(dir)) return true
+    return false
+  }
+  const fresh: FileNode[] = []
+  for (const kids of listed.values()) {
+    for (const k of kids) {
+      if (under(k.id)) continue
+      const old = keep.get(k.id)
+      fresh.push(old && old.kind === 'dir' && k.kind === 'dir' ? { ...k, loaded: old.loaded } : k)
+    }
+  }
+  const out = nodes.filter(n => !listed.has(n.parent) && !under(n.id))
+  return [...out.map(n => (listed.has(n.id) ? { ...n, loaded: true } : n)), ...fresh]
 }
 
 export type GitStatus = {

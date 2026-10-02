@@ -80,7 +80,10 @@ let home = ''
 let platform: Promise<'linux' | 'darwin' | 'win32'> | null = null
 let dirty: { root: string; files: Record<string, Change> } = { root: '', files: {} }
 let markId = 0
+let listSeq = 0
 let lastRoot = ''
+const listLatest = new Map<string, number>()
+const unreadable = new Set<string>()
 
 function osName($: EngineInterface): Promise<'linux' | 'darwin' | 'win32'> {
   platform ??= (async () => {
@@ -137,7 +140,7 @@ async function setActivities($: EngineInterface, fn: (list: Activity[]) => Activ
   }
 }
 
-async function list($: EngineInterface, dir: string): Promise<FileNode[]> {
+async function list($: EngineInterface, dir: string): Promise<FileNode[] | null> {
   try {
     const entries = await $.fs.list(dir)
     const resolved = await Promise.all(
@@ -153,21 +156,30 @@ async function list($: EngineInterface, dir: string): Promise<FileNode[]> {
         }
       }),
     )
+    unreadable.delete(dir)
     return toNodes(dir, resolved)
-  } catch {
-    return []
+  } catch (err) {
+    if (!(await exists($, dir))) return []
+    if (!unreadable.has(dir)) {
+      unreadable.add(dir)
+      $.ui.toast(`could not list ${shortPath(dir)}: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    return null
   }
 }
 
 async function loadDirs($: EngineInterface, dirs: string[]): Promise<Map<string, FileNode[]>> {
   const root = (await get($)).root
-  const listed = new Map<string, FileNode[]>(await Promise.all(dirs.map(async dir => [dir, await list($, dir)] as const)))
-  await patch($, t => {
-    if (t.root !== root) return {}
-    let nodes = t.nodes
-    for (const [dir, kids] of listed) nodes = replaceChildren(nodes, dir, kids)
-    return { nodes }
-  })
+  const seq = ++listSeq
+  for (const dir of dirs) listLatest.set(dir, seq)
+  const results = await Promise.all(dirs.map(async dir => [dir, await list($, dir)] as const))
+  const listed = new Map<string, FileNode[]>()
+  for (const [dir, kids] of results) {
+    if (listLatest.get(dir) !== seq) continue
+    listLatest.delete(dir)
+    if (kids) listed.set(dir, kids)
+  }
+  await patch($, t => (t.root === root ? { nodes: replaceChildren(t.nodes, listed) } : {}))
   return listed
 }
 
@@ -619,7 +631,7 @@ async function walk($: EngineInterface, root: string, depth: number, limit: numb
   for (let d = 0; d < depth && level.length && out.length < limit; d++) {
     const next: string[] = []
     for (const dir of level) {
-      for (const n of await list($, dir)) {
+      for (const n of (await list($, dir)) ?? []) {
         if (n.kind === 'dir') {
           if (!PRUNE.includes(n.name)) next.push(n.id)
         } else out.push(n.id)
