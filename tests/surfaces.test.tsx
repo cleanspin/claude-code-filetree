@@ -15,6 +15,7 @@ type World = {
   denied?: string[]
   heads?: string[]
   tool?: (e: any) => unknown
+  find?: string
 }
 type Ran = string[][]
 const opens: unknown[] = []
@@ -66,6 +67,7 @@ function world(on: any, w: World, ran: Ran) {
     const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     const exit = w.exits?.[argv[0] ?? '']
     if (exit) return { value: { exitCode: exit[0], stdout: '', stderr: exit[1], isStdoutTruncated: false, isStderrTruncated: false } }
+    if (argv[0] === 'find' && w.find !== undefined) return ok(w.find)
     if (argv[0] === 'uname') return ok(w.os === 'darwin' ? 'Darwin\n' : 'Linux\n')
     if (argv[0] === 'sh') return ok('missing\n')
     if (argv[0] === 'git') {
@@ -358,6 +360,7 @@ test('sidebar only: no pane in the default layout, and an inline pane closes its
   await ui.unmount()
 })
 
+const shimmer = (name: string, tone: string) => `"t":${JSON.stringify(name)},"sh":"${tone}"`
 const fullscreen = (args: string) => ({ command: 'filetree', args, origin: { kind: 'person' }, presentation: { isFullscreen: true, columns: 200 } }) as any
 
 test('after /clear the tree rebuilds itself, keeps a pinned folder, and an empty root never loops', { timeoutMs: 20_000 }, async ($, on) => {
@@ -599,4 +602,18 @@ test('a pinned path with dot segments resolves to the same folder', { timeoutMs:
   await clock.settle()
   const r = await $.command.run(fullscreen(`${root}/./src/..`))
   expect(JSON.stringify(r)).toContain('File tree on ~/proj.')
+})
+
+test('a written file whose name holds a newline still shimmers', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const root = '/home/k/scratch'
+  const clock = world(on, { os: 'linux', env: { HOME: '/home/k' }, cwd: root, top: '', dirs: { [root]: [['a\nb.ts', 'file'], ['c.txt', 'file']] }, status: '', numstat: '', find: `${root}/a\nb.ts\0` }, ran)
+  await $.session.start({ cwd: root, surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: paneProps(60) })
+  await $.tool.call({ tool: 'Bash', command: 'touch "a\nb.ts"' } as any)
+  await clock.settle()
+  expect(ran.find(a => a[0] === 'find')).toContain('-print0')
+  expect(await texts(ui)).toContain(shimmer('a\nb.ts', 'orange'))
+  await ui.unmount()
 })

@@ -314,8 +314,8 @@ async function changedSince($: EngineInterface, root: string, since: Since, dept
   if (rootOfDisk(root)) return []
   const test = since.mark ? ['-newer', since.mark] : ['-newermt', `@${(since.ms / 1000).toFixed(3)}`]
   try {
-    const run = await $.process.run(['find', '-H', root, '-xdev', ...(depth ? ['-maxdepth', String(depth)] : []), ...pruneArgs(root, ignored.filter(p => inside(root, p)).slice(0, 40)), ...test, '-print'], { timeoutMs: 8_000 })
-    return run.stdout.split('\n').filter(p => p && p !== root)
+    const run = await $.process.run(['find', '-H', root, '-xdev', ...(depth ? ['-maxdepth', String(depth)] : []), ...pruneArgs(root, ignored.filter(p => inside(root, p)).slice(0, 40)), ...test, '-print0'], { timeoutMs: 8_000 })
+    return run.stdout.split('\0').filter(p => p && p !== root)
   } catch {
     return []
   }
