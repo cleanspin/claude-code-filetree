@@ -70,7 +70,7 @@ const GH_VERBS: Record<string, Omit<GitAction, 'kind'>> = {
 
 const READ_ONLY_GIT = new Set(['status', 'log', 'diff', 'show', 'blame', 'rev-parse', 'ls-files', 'grep', 'describe', 'config', 'remote', 'reflog', 'shortlog', 'help', 'version', 'check-ignore'])
 
-function segments(command: string): string[][] {
+function segments(command: string, seps: string[] = []): string[][] {
   const out: string[][] = []
   let cur: string[] = []
   let tok = ''
@@ -101,12 +101,16 @@ function segments(command: string): string[][] {
     } else if (ch === '#' && !has) {
       while (i + 1 < command.length && command[i + 1] !== '\n') i++
     } else if (ch === ' ' || ch === '\t') endTok()
-    else if (ch === '\n' || ch === ';') endSeg()
-    else if (ch === '&' && (command[i - 1] === '>' || command[i + 1] === '>')) {
+    else if (ch === '\n' || ch === ';') {
+      seps.push(';')
+      endSeg()
+    } else if (ch === '&' && (command[i - 1] === '>' || command[i + 1] === '>')) {
       tok += ch
       has = true
     } else if (ch === '&' || ch === '|') {
-      if (command[i + 1] === ch) i++
+      const twice = command[i + 1] === ch
+      if (twice) i++
+      seps.push(twice ? ch + ch : ch)
       endSeg()
     } else {
       tok += ch
@@ -115,6 +119,7 @@ function segments(command: string): string[][] {
   }
   endSeg()
   if (!quote) return out
+  seps.push(';')
   return command
     .split(/&&|\|\||;|\||\n/)
     .map(s => s.trim().split(/\s+/).filter(Boolean))
@@ -126,6 +131,12 @@ function stripGlobals(tokens: string[]): string[] {
   if (out[0] === 'env') out.shift()
   while (out.length && /^[A-Z_][A-Z0-9_]*=/.test(out[0] ?? '')) out.shift()
   return out
+}
+
+export function chainOf(command: string): { size: number; and: boolean } {
+  const seps: string[] = []
+  const size = segments(command, seps).length
+  return { size, and: seps.every(s => s === '&&') }
 }
 
 export function gitActions(command: string): GitAction[] {

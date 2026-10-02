@@ -1,7 +1,7 @@
-import type { EngineInterface, Register, Timer } from 'claude-code'
+import type { BuiltinToolResults, EngineInterface, Register, Timer } from 'claude-code'
 
 import type { Activity, FileNode, FileTree, Theme } from '../types'
-import { BRANCH_ICON, type GitAction, gitActions, readOnly, readTargets, resolve, TONES } from './git'
+import { BRANCH_ICON, chainOf, type GitAction, gitActions, readOnly, readTargets, resolve, TONES } from './git'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import { CHEVRON_CLOSED, CHEVRON_OPEN, fileIcon, GIT_COLOR } from './icons'
 import {
@@ -84,6 +84,7 @@ let listSeq = 0
 let lastRoot = ''
 const listLatest = new Map<string, number>()
 const unreadable = new Set<string>()
+const background = new Map<string, Background>()
 
 function osName($: EngineInterface): Promise<'linux' | 'darwin' | 'win32'> {
   platform ??= (async () => {
@@ -412,8 +413,20 @@ async function followCwd($: EngineInterface): Promise<boolean> {
   return true
 }
 
-type Pending = { actions: GitAction[]; ids: number[] }
-type Job = { p: Pending | null; since: Since; initRepo: boolean; readOnly: boolean }
+type Pending = { actions: GitAction[]; ids: number[]; command: string; head: string }
+type Job = { actions: GitAction[]; since: Since; initRepo: boolean; readOnly: boolean }
+type Background = { p: Pending | null; job: Job; reads: string[] }
+type GitOperation = NonNullable<BuiltinToolResults['Bash']['gitOperation']>
+type Outcome = { state: 'done' | 'failed'; label: string; detail: string }
+
+const PROOF: Record<string, (op: GitOperation) => boolean> = {
+  push: op => Boolean(op.push),
+  merge: op => op.branch?.action === 'merged',
+  rebase: op => op.branch?.action === 'rebased',
+  'pr create': op => op.pr?.action === 'created',
+  'pr merge': op => op.pr?.action === 'merged',
+  'pr comment': op => op.pr?.action === 'commented',
+}
 
 async function startGit($: EngineInterface, actions: GitAction[]): Promise<number[]> {
   const now = await $.clock.now()
@@ -435,27 +448,69 @@ async function startGit($: EngineInterface, actions: GitAction[]): Promise<numbe
   return ids
 }
 
-async function finishGit($: EngineInterface, p: Pending, ok: boolean): Promise<void> {
-  const t = await get($)
-  let commit = ''
-  if (ok && t.top && p.actions.some(a => a.verb === 'commit')) {
-    try {
-      const log = await git($, t.root, ['log', '-1', '--format=%h'], 5_000)
-      commit = log.exitCode === 0 ? log.stdout.trim() : ''
-    } catch {
-      commit = ''
-    }
+async function headOf($: EngineInterface, cwd: string): Promise<string> {
+  try {
+    const run = await git($, cwd, ['rev-parse', 'HEAD'], 5_000)
+    return run.exitCode === 0 ? run.stdout.trim() : ''
+  } catch {
+    return ''
   }
+}
+
+async function outcomes($: EngineInterface, p: Pending, ok: boolean, op: GitOperation | undefined): Promise<Outcome[]> {
+  const chain = chainOf(p.command)
+  const after = p.actions.some(a => a.verb === 'commit') && !op?.commit ? await headOf($, (await get($)).root || (await cwdOf($))) : ''
+  return p.actions.map(a => {
+    if (a.verb === 'commit') {
+      const sha = op?.commit?.sha || (after && after !== p.head ? after : '')
+      return sha ? { state: 'done', label: a.done, detail: sha.slice(0, 7) } : { state: 'failed', label: `${a.verb} failed`, detail: '' }
+    }
+    if ((op && PROOF[a.verb]?.(op)) || (ok && chain.and)) return { state: 'done', label: a.done, detail: '' }
+    if (!ok && chain.and && chain.size === 1) return { state: 'failed', label: `${a.verb} failed`, detail: '' }
+    return { state: 'done', label: `ran ${a.kind}`, detail: '' }
+  })
+}
+
+async function finishGit($: EngineInterface, p: Pending, results: Outcome[]): Promise<void> {
   const now = await $.clock.now()
   await setActivities($, cur =>
     cur.map(a => {
       const i = p.ids.indexOf(a.id)
-      const action = i < 0 ? undefined : p.actions[i]
-      if (!action) return a
-      return { ...a, state: ok ? 'done' : 'failed', label: ok ? action.done : `${action.verb} failed`, detail: action.verb === 'commit' ? commit : '', at: now }
+      const result = i < 0 ? undefined : results[i]
+      return result ? { ...a, ...result, at: now } : a
     }),
   )
   $.clock.after(ACTIVITY_TTL_MS + 500, () => void setActivities($, cur => cur.filter(a => a.state === 'running' || a.at > now)))
+}
+
+function failAll(p: Pending): Outcome[] {
+  return p.actions.map(a => ({ state: 'failed', label: `${a.verb} failed`, detail: '' }))
+}
+
+function proven(p: Pending | null, results: Outcome[]): GitAction[] {
+  return p ? p.actions.filter((_, i) => results[i]?.state !== 'failed') : []
+}
+
+function taskEnds(text: string): [string, string][] {
+  return [...text.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)].flatMap(m => {
+    const id = /<task-id>([^<]*)<\/task-id>/.exec(m[1] ?? '')?.[1]?.trim()
+    const status = /<status>([^<]*)<\/status>/.exec(m[1] ?? '')?.[1]?.trim()
+    return id && status ? [[id, status] as [string, string]] : []
+  })
+}
+
+async function settleBackground($: EngineInterface, text: string): Promise<void> {
+  if (background.size === 0 || !text.includes('<task-notification>')) return
+  for (const [id, status] of taskEnds(text)) {
+    const task = background.get(id)
+    if (!task) continue
+    background.delete(id)
+    const ok = status === 'completed'
+    const results = task.p ? await outcomes($, task.p, ok, undefined) : []
+    if (task.p) await finishGit($, task.p, results)
+    if (showReads) queuedReads.push(...task.reads)
+    scheduleScan($, { ...task.job, actions: proven(task.p, results) })
+  }
 }
 
 async function gitPaths($: EngineInterface, root: string, prefix: string, committed: boolean): Promise<string[]> {
@@ -521,7 +576,7 @@ async function afterBash($: EngineInterface, jobs: Job[]): Promise<void> {
   if (await followCwd($)) return
   const t = await get($)
   if (!t.root) return
-  const actions = jobs.flatMap(j => j.p?.actions ?? [])
+  const actions = jobs.flatMap(j => j.actions)
   const writers = jobs.filter(j => !j.readOnly)
   const since = (writers.length ? writers : jobs).reduce((a, j) => (j.since.ms < a.ms ? j.since : a), (writers[0] ?? jobs[0])?.since ?? { ms: 0, mark: '', os: 'linux' as const })
   const writes = !jobs.every(j => j.readOnly)
@@ -817,28 +872,36 @@ export const register: Register = (on, options) => {
     const actions = gitActions(command)
     const quiet = !actions.length && readOnly(command)
     const since = await sinceNow($, e.tool === 'Bash' && !quiet)
-    const pending: Pending | null = actions.length ? { actions, ids: await startGit($, actions) } : null
+    const before = actions.some(a => a.verb === 'commit') ? await get($) : null
+    const head = before?.top ? await headOf($, before.root) : ''
+    const pending: Pending | null = actions.length ? { actions, ids: await startGit($, actions), command, head } : null
     let result: Awaited<ReturnType<typeof next>>
     try {
       result = await next(e)
     } catch (err) {
-      if (pending) await finishGit($, pending, false)
+      if (pending) await finishGit($, pending, failAll(pending))
       if (since.mark) void $.process.run(['rm', '-f', since.mark], { timeoutMs: 3_000 }).catch(() => undefined)
       throw err
     }
-    const failed = Boolean(result.deny || result.isError)
     if (pending && result.deny) {
       const ids = pending.ids
       void setActivities($, cur => cur.filter(a => !ids.includes(a.id)))
-    } else if (pending) void finishGit($, pending, !failed)
-    if (failed) {
+    }
+    if (result.deny || (result.isError && e.tool !== 'Bash')) {
       if (since.mark) void $.process.run(['rm', '-f', since.mark], { timeoutMs: 3_000 }).catch(() => undefined)
       return result
     }
     if (e.tool === 'Bash') {
-      const stdout = result.result && typeof result.result === 'object' && 'stdout' in result.result ? String(result.result.stdout) : ''
-      if (showReads) queuedReads.push(...readTargets(command, cwd, stdout, home))
-      scheduleScan($, { p: pending, since, initRepo: actions.some(a => a.init), readOnly: quiet })
+      const out: Partial<BuiltinToolResults['Bash']> = !result.isError && result.result && typeof result.result === 'object' ? result.result : {}
+      const reads = showReads ? readTargets(command, cwd, typeof out.stdout === 'string' ? out.stdout : '', home) : []
+      const job: Job = { actions: [], since, initRepo: actions.some(a => a.init), readOnly: quiet }
+      if (out.backgroundTaskId) background.set(out.backgroundTaskId, { p: pending, job, reads })
+      else void (async () => {
+        const results = pending ? await outcomes($, pending, !result.isError, out.gitOperation) : []
+        if (pending) await finishGit($, pending, results)
+        queuedReads.push(...reads)
+        scheduleScan($, { ...job, actions: proven(pending, results) })
+      })()
       if (follow && /(^|[;&|\s])(cd|pushd|popd)(\s|$)/.test(command)) $.clock.after(400, () => void followCwd($))
     } else {
       const file =
@@ -945,6 +1008,7 @@ export const register: Register = (on, options) => {
   })
 
   on('prompt.submit', async ($, e, next) => {
+    void settleBackground($, e.text)
     if (!(await followCwd($))) void sync($)
     const t = await get($)
     const context = [...(e.context ?? [])]
@@ -969,6 +1033,11 @@ export const register: Register = (on, options) => {
       })()
     }
     return next(context.length ? { ...e, context } : e)
+  })
+
+  on('prompt.attachment', async ($, e, next) => {
+    void settleBackground($, e.text)
+    return next(e)
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e, next) => {

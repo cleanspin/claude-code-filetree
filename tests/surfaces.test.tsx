@@ -13,6 +13,8 @@ type World = {
   exits?: Record<string, [number, string]>
   delays?: Record<string, number[]>
   denied?: string[]
+  heads?: string[]
+  tool?: (e: any) => unknown
 }
 type Ran = string[][]
 const opens: unknown[] = []
@@ -68,6 +70,7 @@ function world(on: any, w: World, ran: Ran) {
     if (argv[0] === 'sh') return ok('missing\n')
     if (argv[0] === 'git') {
       const verb = argv.slice(4).find(a => !a.startsWith('-'))
+      if (verb === 'rev-parse' && argv.at(-1) === 'HEAD') return ok(`${(w.heads && w.heads.length > 1 ? w.heads.shift() : w.heads?.[0]) ?? ''}\n`)
       if (verb === 'rev-parse') return w.top ? ok(`\n${w.top}\n`) : { value: { exitCode: 128, stdout: '', stderr: 'not a git repository', isStdoutTruncated: false, isStderrTruncated: false } }
       if (verb === 'status') return ok(w.status)
       if (verb === 'diff') return ok(w.numstat)
@@ -80,7 +83,7 @@ function world(on: any, w: World, ran: Ran) {
     }
     return ok('')
   })
-  on('tool.call', () => ({ result: { stdout: '', stderr: '' } }))
+  on('tool.call', (_$: any, e: any) => (w.tool?.(e) ?? { result: { stdout: '', stderr: '' } }) as any)
   on('prompt.submit', (_$: any, e: any) => ({ text: e.text, context: e.context }))
   return clock
 }
@@ -467,5 +470,77 @@ test('a cwd change moves the tree and drops the old selection before the next pr
   await $.classic.CwdChanged({ old_cwd: b, new_cwd: c } as any)
   await clock.settle()
   expect(await texts(ui)).toContain('c.txt')
+  await ui.unmount()
+})
+
+test('a background git push stays running until its task notification arrives', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const root = '/home/k/proj'
+  const clock = world(on, {
+    os: 'linux', env: { HOME: '/home/k' }, cwd: root, top: root, dirs: { [root]: [['a.txt', 'file']] }, status: '## main\0', numstat: '',
+    tool: e => ({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: e.command === 'git push' ? 'b1' : 'b2' } }),
+  }, ran)
+  await $.session.start({ cwd: root, surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: paneProps(60) })
+  await $.tool.call({ tool: 'Bash', command: 'git push', run_in_background: true } as any)
+  await clock.settle()
+  expect(await texts(ui)).toContain('pushing…')
+  expect(await texts(ui)).not.toContain('pushed')
+  await $.prompt.submit({ text: '<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n<summary>Background command "git push" completed (exit code 0)</summary>\n</task-notification>', wait: false } as any)
+  await clock.settle()
+  expect(await texts(ui)).toContain('pushed')
+  await $.tool.call({ tool: 'Bash', command: 'git pull', run_in_background: true } as any)
+  await clock.settle()
+  await $.prompt.submit({ text: '<task-notification>\n<task-id>b2</task-id>\n<status>failed</status>\n<summary>Background command "git pull" failed with exit code 1</summary>\n</task-notification>', wait: false } as any)
+  await clock.settle()
+  expect(await texts(ui)).toContain('pull failed')
+  await ui.unmount()
+})
+
+test('a failed Bash command still refreshes what it changed before failing', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const root = '/home/k/proj'
+  const w: World = { os: 'linux', env: { HOME: '/home/k' }, cwd: root, top: root, dirs: { [root]: [['a.txt', 'file'], ['b.txt', 'file']] }, status: '## main\0', numstat: '', tool: () => ({ isError: true, result: 'Exit code 1' }) }
+  const clock = world(on, w, ran)
+  await $.session.start({ cwd: root, surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: paneProps(60) })
+  expect(await texts(ui)).toContain(`"id":"${root}/a.txt"`)
+  const before = ran.filter(a => a.includes('status')).length
+  w.dirs[root] = [['b.txt', 'file']]
+  await $.tool.call({ tool: 'Bash', command: 'rm a.txt && false' } as any)
+  await clock.settle()
+  expect(ran.filter(a => a.includes('status')).length).toBeGreaterThan(before)
+  expect(await texts(ui)).not.toContain(`"id":"${root}/a.txt"`)
+  await ui.unmount()
+})
+
+test('git activity is only certified by evidence: HEAD for commits, the exit code only for plain && chains', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const root = '/home/k/proj'
+  const w: World = { os: 'linux', env: { HOME: '/home/k' }, cwd: root, top: root, dirs: { [root]: [['a.txt', 'file']] }, status: '## main\0', numstat: '', heads: ['abc1234def0'] }
+  const clock = world(on, w, ran)
+  await $.session.start({ cwd: root, surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: paneProps(60) })
+  await $.tool.call({ tool: 'Bash', command: 'git commit -m test || true' } as any)
+  await clock.settle()
+  let shown = await texts(ui)
+  expect(shown).toContain('commit failed')
+  expect(shown).not.toContain('committed')
+  expect(ran.some(a => a.includes('diff-tree'))).toBe(false)
+  w.heads = ['abc1234def0', 'fed4321cba9']
+  await $.tool.call({ tool: 'Bash', command: 'git commit -m real' } as any)
+  await clock.settle()
+  shown = await texts(ui)
+  expect(shown).toContain('committed')
+  expect(shown).toContain('fed4321')
+  await $.tool.call({ tool: 'Bash', command: 'git push; echo done' } as any)
+  await clock.settle()
+  expect(await texts(ui)).toContain('ran git push')
+  await $.tool.call({ tool: 'Bash', command: 'git fetch && git status' } as any)
+  await clock.settle()
+  expect(await texts(ui)).toContain('fetched')
   await ui.unmount()
 })
