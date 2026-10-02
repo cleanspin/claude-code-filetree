@@ -191,9 +191,9 @@ function tidy(path: string): string {
 export function resolve(cwd: string, p: string, home = ''): string {
   let path = posix(p)
   if (home && (path === '~' || path.startsWith('~/'))) path = home + path.slice(1)
-  if (isAbsolute(path)) return tidy(path)
-  const parts = posix(cwd).replace(/\/+$/, '').split('/')
-  for (const seg of path.split('/')) {
+  const drive = isAbsolute(path) && !path.startsWith('/') ? path.slice(0, 2) : ''
+  const parts = isAbsolute(path) ? [drive] : posix(cwd).replace(/\/+$/, '').split('/')
+  for (const seg of path.slice(drive.length).split('/')) {
     if (!seg || seg === '.') continue
     if (seg === '..') {
       if (parts.length > 1) parts.pop()

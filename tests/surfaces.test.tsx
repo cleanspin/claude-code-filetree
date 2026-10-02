@@ -590,3 +590,13 @@ test('search matches relative paths and refresh picks up files added since the i
   expect(await texts(ui)).toContain(`"id":"${root}/src/beta.ts"`)
   await ui.unmount()
 })
+
+test('a pinned path with dot segments resolves to the same folder', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const root = '/home/k/proj'
+  const clock = world(on, { os: 'linux', env: { HOME: '/home/k' }, cwd: '/home/k', top: '', dirs: { [root]: [['a.ts', 'file']], [`${root}/src`]: [] }, status: '', numstat: '' }, ran)
+  await $.session.start({ cwd: '/home/k', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const r = await $.command.run(fullscreen(`${root}/./src/..`))
+  expect(JSON.stringify(r)).toContain('File tree on ~/proj.')
+})
