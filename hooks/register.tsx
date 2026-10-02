@@ -1,4 +1,4 @@
-import type { BuiltinToolResults, EngineInterface, Register, Timer } from 'claude-code'
+import { type BuiltinToolResults, type EngineInterface, type Register, type Timer, update } from 'claude-code'
 
 import type { Activity, FileNode, FileTree, Theme } from '../types'
 import { BRANCH_ICON, chainOf, type GitAction, gitActions, readOnly, readTargets, resolve, TONES } from './git'
@@ -119,11 +119,7 @@ async function get($: EngineInterface): Promise<FileTree> {
 }
 
 async function put($: EngineInterface, fn: (t: FileTree) => FileTree): Promise<void> {
-  for (let i = 0; i < 20; i++) {
-    const cur = await $.state.get(TREE)
-    const done = await $.state.set(TREE, fn({ ...emptyTree(''), ...cur.value }), { ifVersion: cur.version })
-    if (done.isSet) return
-  }
+  await update($, TREE, cur => fn({ ...emptyTree(''), ...cur }))
 }
 
 function patch($: EngineInterface, fn: (t: FileTree) => Partial<FileTree>) {
@@ -135,11 +131,7 @@ async function activities($: EngineInterface): Promise<Activity[]> {
 }
 
 async function setActivities($: EngineInterface, fn: (list: Activity[]) => Activity[]): Promise<void> {
-  for (let i = 0; i < 20; i++) {
-    const cur = await $.state.get(ACTIVITY)
-    const done = await $.state.set(ACTIVITY, fn(cur.value ?? []).slice(-6), { ifVersion: cur.version })
-    if (done.isSet) return
-  }
+  await update($, ACTIVITY, cur => fn(cur ?? []).slice(-6))
 }
 
 async function list($: EngineInterface, dir: string): Promise<FileNode[] | null> {
