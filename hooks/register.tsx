@@ -64,6 +64,7 @@ let lastPress = { key: '', at: 0 }
 let noNerd = false
 let glyphSetting = 'auto'
 let follow = true
+let followClaude = true
 let scanning: Promise<void> | null = null
 let scanJobs: Job[] = []
 let gitRun: Promise<void> | null = null
@@ -350,6 +351,13 @@ function openDirs(t: FileTree): string[] {
   return t.nodes.filter(n => n.kind === 'dir' && n.loaded && open.has(n.id)).map(n => n.id)
 }
 
+function keepTop(cur: FileTree, expanded: string[]): Partial<FileTree> {
+  if (followClaude) return { scroll: null }
+  const top = visibleRows(cur)[cur.scroll ?? view.from]?.node.id
+  const at = top ? visibleRows({ ...cur, expanded }).findIndex(r => r.node.id === top) : -1
+  return at < 0 ? {} : { scroll: at }
+}
+
 async function flash($: EngineInterface, tones: Record<string, string>): Promise<void> {
   const unique = Object.keys(tones)
   if (unique.length === 0) return
@@ -387,7 +395,7 @@ async function flash($: EngineInterface, tones: Record<string, string>): Promise
       flashOn: true,
       flashTones: all,
       expanded: [...open],
-      scroll: null,
+      ...keepTop(cur, [...open]),
     }
   })
   if (generation !== mine) return
@@ -829,6 +837,7 @@ export const register: Register = (on, options) => {
   const activity = typeof options?.activity === 'string' ? options.activity : 'reads and writes'
   showReads = activity.includes('reads')
   showWrites = activity.includes('writes')
+  followClaude = options?.follow !== 'off'
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'filetree', description: 'Show the file tree; args: [path] (no path = cwd)' })
     const windows = (await $.env.get('OS')) === 'Windows_NT'
@@ -1065,12 +1074,12 @@ export const register: Register = (on, options) => {
     const fixed = 2 + (t.top ? (t.branch ? 1 : 0) : 1) + (t.selected || latest ? 1 : 0)
     const room = Math.max(5, (e.props.scroll?.bodyRows ?? 40) - fixed)
     const isLit = (id: string) => bright.has(id) || dimmed.has(id)
-    const focus = t.flashOn ? ([...t.flash].reverse().find(id => id !== BRANCH_ROW) ?? t.cursor) : t.cursor
+    const focus = followClaude && t.flashOn ? ([...t.flash].reverse().find(id => id !== BRANCH_ROW) ?? t.cursor) : t.cursor
     const at = Math.max(0, rows.findIndex(r => r.node.id === focus))
-    const lit = t.flashOn ? rows.findIndex(r => isLit(r.node.id)) : -1
+    const lit = followClaude && t.flashOn ? rows.findIndex(r => isLit(r.node.id)) : -1
     const cap = Math.max(1, Math.floor(room / 3))
     let from = Math.max(0, Math.min(lit >= 0 && at - lit < room - 2 ? Math.max(0, lit - 1) : at - Math.floor(room / 2), rows.length - room))
-    let pinned = t.flashOn ? rows.slice(0, from).filter(r => isLit(r.node.id)).slice(-cap) : []
+    let pinned = followClaude && t.flashOn ? rows.slice(0, from).filter(r => isLit(r.node.id)).slice(-cap) : []
     if (pinned.length) {
       const rest = Math.max(3, room - pinned.length)
       from = Math.max(0, Math.min(at - Math.floor(rest / 2), rows.length - rest))

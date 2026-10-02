@@ -71,9 +71,10 @@ You can resize the pane with the mouse, or by setting custom `pane:grow` or `pan
 
 ## Settings
 
-Both settings are in `/config` under filetree.
+All settings are in `/config` under filetree.
 
 - **Claude activity:** what shimmers: `reads and writes` (default), `writes`, `reads` or `none`. Git status, line counts and the git status at the bottom always show.
+- **Follow Claude:** `on` (default) scrolls the tree to what Claude reads, writes or commits; `off` keeps the view where you put it, and highlights still show.
 - **Glyphs:** `auto` (default) uses Nerd Font icons when a Nerd Font is installed and your terminal started after it was installed, plain Unicode in the desktop app, and Nerd Font over SSH. `nerd` or `plain` forces one.
 
 ## herdr

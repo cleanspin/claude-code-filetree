@@ -36,6 +36,16 @@
         "nerd",
         "plain"
       ]
+    },
+    "follow": {
+      "type": "string",
+      "title": "Follow Claude",
+      "description": "on: the tree scrolls to what Claude reads, writes or commits. off: the view stays where you put it and only your own scrolling moves it; highlights still show.",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ]
     }
   },
   "license": "MIT"

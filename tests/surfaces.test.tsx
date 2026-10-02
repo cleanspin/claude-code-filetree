@@ -298,6 +298,53 @@ test('long trees scroll: wheel, scrollbar drag, and a click does not jump the vi
   await ui.unmount()
 })
 
+async function scrolledTree($: any, on: any) {
+  const root = '/home/k/big'
+  const files = Array.from({ length: 60 }, (_, i) => [`f${String(i).padStart(2, '0')}.txt`, 'file'] as [string, 'file'])
+  const kids = Array.from({ length: 5 }, (_, i) => [`a${i}.txt`, 'file'] as [string, 'file'])
+  const clock = world(on, { os: 'linux', env: { HOME: '/home/k' }, cwd: root, top: '', dirs: { [root]: [['a', 'dir'], ...files], [`${root}/a`]: kids }, status: '', numstat: '' }, [])
+  await $.session.start({ cwd: root, surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: { ...paneProps(60), scroll: { offset: 0, bodyRows: 20 } } })
+  await clock.settle()
+  await $.ui.scroll({ component: 'Pane', requestId: 'filetree', by: 1 } as any)
+  await clock.settle()
+  const ids = async () => (((await ui.drawn()) as any).children.find((c: any) => c.type === 'Client').props.props.rows as { id: string }[]).map(r => r.id)
+  expect((await ids())[0]).toBe(`${root}/f02.txt`)
+  return { root, clock, ui, ids }
+}
+
+test('follow on: the tree scrolls to the file Claude reads', { timeoutMs: 20_000 }, async ($, on) => {
+  const { root, clock, ui, ids } = await scrolledTree($, on)
+  await $.tool.call({ tool: 'Read', file_path: `${root}/f55.txt` } as any)
+  await clock.settle()
+  expect(await ids()).toContain(`${root}/f55.txt`)
+  expect((await ids())[0]).not.toBe(`${root}/f02.txt`)
+  await ui.unmount()
+})
+
+test('follow off: reads, writes and folders Claude opens above the view never move it', { timeoutMs: 20_000, options: { follow: 'off' } }, async ($, on) => {
+  const { root, clock, ui, ids } = await scrolledTree($, on)
+  await $.tool.call({ tool: 'Read', file_path: `${root}/f55.txt` } as any)
+  await clock.settle()
+  expect((await ids())[0]).toBe(`${root}/f02.txt`)
+  expect(await ids()).not.toContain(`${root}/f55.txt`)
+  await $.tool.call({ tool: 'Read', file_path: `${root}/f05.txt` } as any)
+  await clock.settle()
+  expect((await ids())[0]).toBe(`${root}/f02.txt`)
+  expect(await texts(ui)).toContain(shimmer('f05.txt', 'purple'))
+  await $.tool.call({ tool: 'Read', file_path: `${root}/a/a3.txt` } as any)
+  await clock.settle()
+  expect((await ids())[0]).toBe(`${root}/f02.txt`)
+  await $.tool.call({ tool: 'Edit', file_path: `${root}/f40.txt`, old_string: 'a', new_string: 'b' } as any)
+  await clock.settle()
+  expect((await ids())[0]).toBe(`${root}/f02.txt`)
+  await $.ui.scroll({ component: 'Pane', requestId: 'filetree', by: 1 } as any)
+  await clock.settle()
+  expect((await ids())[0]).toBe(`${root}/f05.txt`)
+  await ui.unmount()
+})
+
 test('watches only git metadata, copies paths, clears search, Home and End', { timeoutMs: 20_000 }, async ($, on) => {
   const ran: Ran = []
   const root = '/home/k/proj'
