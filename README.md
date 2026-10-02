@@ -92,7 +92,7 @@ Turn on the pre-commit hook once per clone; it runs `claude plugin validate` and
 git config core.hooksPath .githooks
 ```
 
-The same checks run on macOS, Windows and Linux in CI on every push.
+The same checks run on macOS, Windows and Linux in CI on every push that touches the plugin.
 
 ## License
 

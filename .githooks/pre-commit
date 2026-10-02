@@ -2,7 +2,9 @@
 set -e
 CLAUDE=claude
 [ -x "$HOME/.local/bin/claude" ] && CLAUDE="$HOME/.local/bin/claude"
-git diff --cached --quiet -- hooks tests .claude-plugin && exit 0
-"$CLAUDE" plugin validate . >/dev/null || { "$CLAUDE" plugin validate .; exit 1; }
+git diff --cached --quiet -- hooks tests types .claude-plugin && exit 0
+for manifest in .claude-plugin/plugin.json .claude-plugin/marketplace.json; do
+  "$CLAUDE" plugin validate "$manifest" >/dev/null || { "$CLAUDE" plugin validate "$manifest"; exit 1; }
+done
 out=$("$CLAUDE" plugin test . 2>&1) || { printf '%s\n' "$out"; exit 1; }
 printf '%s\n' "$out" | tail -2

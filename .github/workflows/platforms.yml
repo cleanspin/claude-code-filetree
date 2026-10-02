@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['hooks/**', 'tests/**', '.claude-plugin/**', '.github/workflows/platforms.yml']
+    paths: ['hooks/**', 'tests/**', 'types/**', '.claude-plugin/**', '.github/workflows/platforms.yml']
 
 jobs:
   check:
@@ -24,7 +24,7 @@ jobs:
       - name: Install Claude Code 2.1.287
         run: npm install -g @anthropic-ai/claude-code@2.1.287 && claude --version
       - name: Validate the plugin and marketplace
-        run: claude plugin validate .
+        run: claude plugin validate .claude-plugin/plugin.json && claude plugin validate .claude-plugin/marketplace.json
       - name: Plugin tests on this OS
         run: claude plugin test .
       - name: Platform commands the mod runs
