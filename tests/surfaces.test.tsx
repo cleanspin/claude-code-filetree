@@ -44,11 +44,12 @@ function world(on: any, w: World, ran: Ran) {
   const dirOf = (p: string) => w.dirs[p] ?? w.dirs[p.replace(/^[A-Za-z]:/, '')]
   on('fs.list', async (_$: any, e: any) => {
     const path = norm(e.path)
-    if (w.denied?.includes(path)) return { deny: `EACCES: permission denied, scandir '${path}'` }
+    const bare = path.replace(/^[A-Za-z]:/, '')
+    if (w.denied?.includes(bare)) return { deny: `EACCES: permission denied, scandir '${path}'` }
     const kids = dirOf(path)
     if (!kids) throw new Error(`ENOENT ${e.path}`)
     const value = kids.map(([name, kind]) => ({ name, kind, size: 1, mtimeMs: 1_700_000_000_000, isLink: false }))
-    const delay = w.delays?.[path]?.shift()
+    const delay = w.delays?.[bare]?.shift()
     if (delay) await clock.sleep(delay)
     return { value }
   })
