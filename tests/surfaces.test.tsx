@@ -38,7 +38,7 @@ function world(on: any, w: World, ran: Ran) {
     ran.push(['toast', String(e.text ?? e.message ?? JSON.stringify(e))])
     return { value: undefined }
   })
-  const isTheme = (p: string) => p.endsWith('/.local/state/omarchy/current/theme/colors.toml')
+  const isTheme = (p: string) => p.replace(/\\/g, '/').endsWith('/.local/state/omarchy/current/theme/colors.toml')
   on('fs.read', (_$: any, e: any) => {
     if (w.theme && isTheme(e.path)) return { value: w.theme.toml }
     throw new Error('no theme file')
