@@ -553,6 +553,7 @@ async function sync($: EngineInterface, force = false): Promise<void> {
   const now = await $.clock.now()
   if (!force && now - lastSync < 2_000) return
   lastSync = now
+  searchIndex = null
   const t = await get($)
   if (!t.root) return
   await loadDirs($, [t.root, ...openDirs(t)])

@@ -629,7 +629,7 @@ test('unknown git verbs count as writers and read-only commands skip git work', 
   await ui.unmount()
 })
 
-test('search matches relative paths and refresh picks up files added since the index was built', { timeoutMs: 20_000 }, async ($, on) => {
+test('search matches relative paths, and a refresh or a click in the tree picks up files added since the index was built', { timeoutMs: 20_000 }, async ($, on) => {
   const ran: Ran = []
   const root = '/home/k/proj'
   const w: World = { os: 'linux', env: { HOME: '/home/k' }, cwd: root, top: root, dirs: { [root]: [['src', 'dir'], ['alpha.txt', 'file']], [`${root}/src`]: [['a.ts', 'file']] }, status: '## main\0', numstat: '' }
@@ -647,6 +647,13 @@ test('search matches relative paths and refresh picks up files added since the i
   await ui.input({ key: 'q', text: 'beta', kind: 'change' })
   await clock.settle()
   expect(await texts(ui)).toContain(`"id":"${root}/src/beta.ts"`)
+  w.dirs[`${root}/src`] = [['a.ts', 'file'], ['beta.ts', 'file'], ['gamma.ts', 'file']]
+  await clock.advance(2_500)
+  await ui.post({ key: 'down' }, { in: 'rows' })
+  await clock.settle()
+  await ui.input({ key: 'q', text: 'gamma', kind: 'change' })
+  await clock.settle()
+  expect(await texts(ui)).toContain(`"id":"${root}/src/gamma.ts"`)
   await ui.unmount()
 })
 
