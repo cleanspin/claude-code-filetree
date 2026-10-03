@@ -823,7 +823,6 @@ async function openNode($: EngineInterface, n: FileNode): Promise<void> {
   } else await openFile($, n.id)
 }
 
-// Re-reads the theme only when colors.toml changed, so polling it stays cheap and an Omarchy theme switch shows up
 async function loadTheme($: EngineInterface): Promise<void> {
   const path = `${(await $.env.get('HOME')) ?? ''}/${THEME_FILE}`
   try {
@@ -865,7 +864,6 @@ export const register: Register = (on, options) => {
       }
       await loadTheme($)
       themePoll?.cancel()
-      // Only Omarchy users have a theme file to follow; everyone else keeps a single read
       themePoll = themeMtime ? $.clock.every(THEME_POLL_MS, () => void loadTheme($)) : null
       const t = await get($)
       if (t.flashOn) await patch($, () => ({ flash: [], flashDim: [], flashOn: false, flashTones: {} }))
