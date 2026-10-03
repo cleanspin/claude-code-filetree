@@ -109,9 +109,9 @@ function clean(segs: Seg[]): Seg[] {
   return segs
 }
 
-function lighten(hex: string): string {
+function faint(hex: string): string {
   const v = parseInt(hex.slice(1), 16)
-  const ch = (shift: number) => Math.min(255, ((v >> shift) & 255) + 14)
+  const ch = (shift: number) => Math.round(0x26 + (((v >> shift) & 255) - 0x26) * 0.3)
   return `#${[16, 8, 0].map(x => ch(x).toString(16).padStart(2, '0')).join('')}`
 }
 
@@ -1289,7 +1289,7 @@ export const register: Register = (on, options) => {
         <Client
           key="rows"
           module="./rows.tsx"
-          props={{ rows: specs, active: t.cursor, activeBg: theme.selection, hoverBg: lighten(theme.selection), tones: SHIMMER, pointer, ...(bar ? { bar } : {}) } satisfies RowsProps}
+          props={{ rows: specs, active: t.cursor, activeBg: theme.selection, hoverBg: faint(theme.selection), tones: SHIMMER, pointer, ...(bar ? { bar } : {}) } satisfies RowsProps}
         />
         <Box flexGrow={1} />
         {(t.selected || latest) && (
