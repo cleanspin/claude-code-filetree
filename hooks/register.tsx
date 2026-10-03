@@ -375,7 +375,7 @@ async function walkSize($: EngineInterface, dir: string): Promise<number> {
       }
       for (const e of entries) {
         if (++seen > SIZE_WALK_LIMIT) return -1
-        if (e.kind === 'dir') next.push(join(d, e.name))
+        if (e.kind === 'dir' && !e.isLink) next.push(join(d, e.name))
         else if (e.kind === 'file') total += e.size
       }
     }
@@ -403,7 +403,11 @@ function pumpSizes($: EngineInterface): void {
     sizing.add(dir)
     sizeActive += 1
     void dirSize($, dir)
-      .then(bytes => (epoch === sizeEpoch ? patch($, cur => (inside(cur.root, dir) ? { dirSizes: { ...cur.dirSizes, [dir]: bytes } } : {})) : undefined))
+      .then(async bytes => {
+        if (epoch === sizeEpoch) return patch($, cur => (inside(cur.root, dir) ? { dirSizes: { ...cur.dirSizes, [dir]: bytes } } : {}))
+        const cur = await get($)
+        if (cur.showSize && inside(cur.root, dir) && !(dir in cur.dirSizes) && !sizeQueue.includes(dir)) sizeQueue.push(dir)
+      })
       .catch(() => undefined)
       .finally(() => {
         sizing.delete(dir)

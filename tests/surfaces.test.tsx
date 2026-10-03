@@ -18,6 +18,8 @@ type World = {
   find?: string
   theme?: { toml: string; mtimeMs: number }
   du?: Record<string, string>
+  duDelays?: number[]
+  links?: string[]
 }
 type Ran = string[][]
 const opens: unknown[] = []
@@ -52,7 +54,7 @@ function world(on: any, w: World, ran: Ran) {
     if (w.denied?.includes(bare)) return { deny: `EACCES: permission denied, scandir '${path}'` }
     const kids = dirOf(path)
     if (!kids) throw new Error(`ENOENT ${e.path}`)
-    const value = kids.map(([name, kind]) => ({ name, kind, size: 1, mtimeMs: 1_700_000_000_000, isLink: false }))
+    const value = kids.map(([name, kind]) => ({ name, kind, size: 1, mtimeMs: 1_700_000_000_000, isLink: w.links?.includes(`${bare}/${name}`) ?? false }))
     const delay = w.delays?.[bare]?.shift()
     if (delay) await clock.sleep(delay)
     return { value }
@@ -70,7 +72,7 @@ function world(on: any, w: World, ran: Ran) {
     if (!hit) throw new Error(`ENOENT ${e.path}`)
     return { value: { kind: hit, size: 1, mtimeMs: name === 'a.ts' ? 1_800_000_000_500 : 1_700_000_000_000, isLink: false } }
   })
-  on('process.run', (_$: any, e: any) => {
+  on('process.run', async (_$: any, e: any) => {
     const argv: string[] = [...e.argv]
     ran.push(argv)
     if (e.init?.env) envs.push(e.init.env)
@@ -78,7 +80,11 @@ function world(on: any, w: World, ran: Ran) {
     const exit = w.exits?.[argv[0] ?? '']
     if (exit) return { value: { exitCode: exit[0], stdout: '', stderr: exit[1], isStdoutTruncated: false, isStderrTruncated: false } }
     if (argv[0] === 'find' && w.find !== undefined) return ok(w.find)
-    if (argv[0] === 'du') return ok(w.du?.[argv.at(-1) ?? ''] ?? '')
+    if (argv[0] === 'du') {
+      const delay = w.duDelays?.shift()
+      if (delay) await clock.sleep(delay)
+      return ok(w.du?.[argv.at(-1) ?? ''] ?? '')
+    }
     if (argv[0] === 'uname') return ok(w.os === 'darwin' ? 'Darwin\n' : 'Linux\n')
     if (argv[0] === 'sh') return ok('missing\n')
     if (argv[0] === 'git') {
@@ -776,5 +782,46 @@ test('size column on Windows sums file sizes with fs.list instead of du', { time
   await clock.settle()
   expect(await texts(ui)).toContain(' 3 B')
   expect(ran.some(a => a[0] === 'du')).toBe(false)
+  await ui.unmount()
+})
+
+test('a folder whose size job goes stale mid-run is sized again instead of waiting forever', { timeoutMs: 20_000, options: { column: 'size' } }, async ($, on) => {
+  const ran: Ran = []
+  const root = '/home/k/proj'
+  const clock = world(on, {
+    os: 'linux', env: { HOME: '/home/k' }, cwd: root, top: root,
+    dirs: { [root]: [['src', 'dir']], [`${root}/src`]: [['a.ts', 'file']] },
+    status: '## main\0', numstat: '',
+    du: { [`${root}/src`]: `2048\t${root}/src\n` },
+    duDelays: [1_000],
+  }, ran)
+  await $.session.start({ cwd: root, surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: paneProps(60) })
+  await clock.settle()
+  await $.tool.call({ tool: 'Edit', file_path: `${root}/src/a.ts`, old_string: 'a', new_string: 'b' } as any)
+  await clock.settle()
+  await clock.advance(1_500)
+  await clock.settle()
+  expect(await texts(ui)).toContain(' 2.0 M')
+  await ui.unmount()
+})
+
+test('on Windows a folder size does not walk into linked folders, like du', { timeoutMs: 20_000, options: { column: 'size' } }, async ($, on) => {
+  const ran: Ran = []
+  const root = 'C:/Users/k/proj'
+  const clock = world(on, {
+    os: 'win32', env: { OS: 'Windows_NT', USERPROFILE: 'C:\\Users\\k' }, cwd: root, top: '',
+    dirs: { [root]: [['src', 'dir']], [`${root}/src`]: [['a.ts', 'file'], ['b.ts', 'file'], ['back', 'dir']], [`${root}/src/back`]: [['x', 'file'], ['y', 'file'], ['z', 'file'], ['w', 'file']] },
+    links: ['/Users/k/proj/src/back'],
+    status: '', numstat: '',
+  }, ran)
+  await $.session.start({ cwd: root, surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: paneProps(60) })
+  await clock.settle()
+  const shown = await texts(ui)
+  expect(shown).toContain(' 2 B')
+  expect(shown).not.toContain(' 6 B')
   await ui.unmount()
 })
