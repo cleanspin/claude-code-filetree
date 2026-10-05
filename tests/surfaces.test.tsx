@@ -139,7 +139,7 @@ test('macOS Claude Code app: desktop pane draws, selects, opens with open', { ti
   expect(JSON.stringify(sent)).toContain(`${root}/README.md`)
   await ui.post({ press: `${root}/README.md` }, { in: 'rows' })
   await clock.settle()
-  expect(ran).toContainEqual(['open', `${root}/README.md`])
+  expect(ran).toContainEqual(['open', '--', `${root}/README.md`])
   expect(ran.some(a => a[0] === 'setsid' || a[0] === 'gio')).toBe(false)
   await $.tool.call({ tool: 'Bash', command: 'echo hi >> src/a.ts' } as any)
   await clock.settle()
@@ -188,8 +188,8 @@ test('Windows: backslash paths shimmer, open hands the path to PowerShell as dat
   await ui.post({ press: `${root}/a&calc&%USERNAME%.txt` }, { in: 'rows' })
   await ui.post({ press: `${root}/a&calc&%USERNAME%.txt` }, { in: 'rows' })
   await clock.settle()
-  expect(ran).toContainEqual(['powershell', '-NoProfile', '-NonInteractive', '-Command', 'Invoke-Item -LiteralPath $env:FILETREE_OPEN'])
-  expect(envs.at(-1)).toEqual({ FILETREE_OPEN: 'C:\\Users\\k\\proj\\a&calc&%USERNAME%.txt' })
+  expect(ran.find(a => a[0] === 'powershell')?.at(-1)).toContain('UseShellExecute = $true')
+  expect(envs.at(-1)).toEqual({ PANE_OPEN_TARGET: 'C:\\Users\\k\\proj\\a&calc&%USERNAME%.txt' })
   expect(ran.some(a => ['find', 'sh', 'uname', 'setsid', 'touch', 'cmd'].includes(a[0] ?? ''))).toBe(false)
   await ui.unmount()
 })
@@ -211,8 +211,8 @@ test('Linux unchanged: GNU find -newermt outside a repo, xdg-open detached', { t
   await ui.post({ press: `${root}/c.txt` }, { in: 'rows' })
   await ui.post({ press: `${root}/c.txt` }, { in: 'rows' })
   await clock.settle()
-  const opener = ran.find(a => a[0] === 'setsid')
-  expect(opener?.slice(0, 3)).toEqual(['setsid', '-f', 'sh'])
+  const opener = ran.find(a => a[0] === 'sh' && a[2]?.includes('setsid -f -w'))
+  expect(opener?.[2]).toContain('</dev/null >/dev/null 2>&1')
   expect(opener?.at(-1)).toBe(`${root}/c.txt`)
   await ui.unmount()
 })
@@ -461,7 +461,7 @@ test('opener failures show a toast instead of failing silently', { timeoutMs: 20
   await ui.post({ press: `${root}/a.xyz` }, { in: 'rows' })
   await ui.post({ press: `${root}/a.xyz` }, { in: 'rows' })
   await clock.settle()
-  expect(ran).toContainEqual(['open', `${root}/a.xyz`])
+  expect(ran).toContainEqual(['open', '--', `${root}/a.xyz`])
   expect(ran.some(a => a[0] === 'toast' && (a[1] ?? '').includes('No application knows how to open a.xyz'))).toBe(true)
   await ui.unmount()
 })
@@ -825,3 +825,24 @@ test('on Windows a folder size does not walk into linked folders, like du', { ti
   expect(shown).not.toContain(' 6 B')
   await ui.unmount()
 })
+
+for (const os of ['linux', 'win32'] as const) {
+  test(`${os}: a failed file opener is visible`, { timeoutMs: 20_000 }, async ($, on) => {
+    const ran: Ran = []
+    const root = os === 'linux' ? '/home/k/proj' : 'C:/Users/k/proj'
+    const clock = world(on, {
+      os, env: os === 'win32' ? { OS: 'Windows_NT' } : { HOME: '/home/k' }, cwd: root, top: root,
+      dirs: { [root]: [['dax.ts', 'file']] }, status: '', numstat: '',
+      exits: { [os === 'linux' ? 'sh' : 'powershell']: [7, ''] },
+    }, ran)
+    await $.session.start({ cwd: root, surface: 'terminal', isInteractive: true })
+    await clock.settle()
+    const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: paneProps(60) })
+    await clock.settle()
+    await ui.post({ press: `${root}/dax.ts` }, { in: 'rows' })
+    await ui.post({ press: `${root}/dax.ts` }, { in: 'rows' })
+    await clock.settle()
+    expect(ran.some(a => a[0] === 'toast' && a[1]?.includes(`could not open ${root}/dax.ts`) && a[1]?.includes('exit 7'))).toBe(true)
+    await ui.unmount()
+  })
+}
