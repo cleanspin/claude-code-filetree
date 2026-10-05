@@ -869,6 +869,27 @@ async function finePointerOk($: EngineInterface): Promise<boolean> {
   }
 }
 
+const LINUX_OPEN = [
+  'exec </dev/null >/dev/null 2>&1',
+  'f=$1',
+  'if command -v gio >/dev/null; then',
+  '  if [ -f "$f" ] && command -v file >/dev/null && [ "$(file -b --mime-encoding -- "$f")" != binary ]; then',
+  '    case $(gio info -a standard::content-type -- "$f" | sed -n \'s/.*standard::content-type: //p\') in',
+  '      video/* | audio/*)',
+  '        app=$(xdg-mime query default text/plain)',
+  '        IFS=:',
+  '        for dir in "${XDG_DATA_HOME:-$HOME/.local/share}" ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do',
+  '          [ -n "$app" ] && [ -f "$dir/applications/$app" ] && exec gio launch "$dir/applications/$app" "$f"',
+  '        done',
+  '        unset IFS',
+  '        ;;',
+  '    esac',
+  '  fi',
+  '  exec gio open "$f"',
+  'fi',
+  'exec xdg-open "$f"',
+].join('\n')
+
 async function openFile($: EngineInterface, path: string): Promise<void> {
   const os = await osName($)
   const argv =
@@ -876,7 +897,7 @@ async function openFile($: EngineInterface, path: string): Promise<void> {
       ? ['open', path]
       : os === 'win32'
         ? ['powershell', '-NoProfile', '-NonInteractive', '-Command', 'Invoke-Item -LiteralPath $env:FILETREE_OPEN']
-        : ['setsid', '-f', 'sh', '-c', 'if command -v gio >/dev/null; then exec gio open "$1"; else exec xdg-open "$1"; fi </dev/null >/dev/null 2>&1', 'sh', path]
+        : ['setsid', '-f', 'sh', '-c', LINUX_OPEN, 'sh', path]
   try {
     const run = await $.process.run(argv, os === 'win32' ? { timeoutMs: 10_000, env: { FILETREE_OPEN: path.replace(/\//g, '\\') } } : { timeoutMs: 10_000 })
     if (run.exitCode !== 0) $.ui.toast(`could not open ${path} with ${argv[0] ?? ''}: ${run.stderr.trim().split('\n')[0] || `exit ${run.exitCode}`}`)
