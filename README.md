@@ -22,21 +22,28 @@
 
 ## Installation
 
-The repo is its own plugin marketplace. Run this in the terminal:
+This is a fork of [data-goblin/claude-code-filetree](https://github.com/data-goblin/claude-code-filetree) that adds [vim keys](#moving-through-the-tree), [hotkeys](#show-hide-and-focus-the-tree-from-anywhere) to show, hide and focus the tree, theme presets and rounded corners. The repo is its own plugin marketplace. Run this in the terminal:
 
 ```bash
-claude plugin marketplace add data-goblin/claude-code-filetree
+claude plugin marketplace add cleanspin/claude-code-filetree
 claude plugin install filetree@claude-code-filetree
 ```
 
 Or inside a Claude Code session:
 
 ```text
-/plugin marketplace add data-goblin/claude-code-filetree
+/plugin marketplace add cleanspin/claude-code-filetree
 /plugin install filetree@claude-code-filetree
 ```
 
-Installed it as `filetree@filetree` before the repository was renamed? Nothing to do: that install keeps loading and keeps receiving updates.
+Have the original installed? Both register the marketplace `claude-code-filetree`, so remove it first, then install as above:
+
+```bash
+claude plugin uninstall filetree@claude-code-filetree
+claude plugin marketplace remove claude-code-filetree
+```
+
+Restart Claude Code, then pick a look in `/config` under filetree, for example **Theme** `catppuccin-mocha` and **Corners** `round` (see [Settings](#settings)).
 
 ## Features
 
