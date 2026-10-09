@@ -2,9 +2,10 @@ import { type BuiltinToolResults, type EngineInterface, type Register, type Time
 import { openCommand } from './open'
 
 import type { Activity, FileNode, FileTree, Theme } from '../types'
-import { BRANCH_ICON, chainOf, type GitAction, gitActions, readOnly, readTargets, resolve, TONES } from './git'
+import { BRANCH_ICON, chainOf, type GitAction, gitActions, readOnly, readTargets, resolve, tonesOf } from './git'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import { CHEVRON_CLOSED, CHEVRON_OPEN, fileIcon, GIT_COLOR } from './icons'
+import { PRESETS } from './themes'
 import { actionOption, type Command, createReader, DEFAULT_KEYMAP, hotkeysOf, type Keymap, parseKeymap, pressOf, type Reader } from './keymap'
 import {
   ancestorsOf,
@@ -40,7 +41,6 @@ const HIDDEN = { plugin: 'filetree', key: 'hidden' } as const
 const PANE = 'filetree'
 const NAV = 'nav'
 const SEARCH = 'q'
-const SHIMMER = Object.fromEntries(Object.entries(TONES).map(([k, v]) => [k, { bright: v.bright, dim: v.dim }]))
 const BRANCH_ROW = '#branch'
 const FLASH_MS = 2700
 const RUNNING_MAX_MS = 600_000
@@ -52,6 +52,9 @@ const SEARCH_REVEAL_LIMIT = 60
 const ACTIVITY_TTL_MS = 45_000
 const ADD_COLOR = '#98c379'
 const DEL_COLOR = '#e06c75'
+const MOD_COLOR = '#e5c07b'
+const ROUND_CAPS: [string, string] = ['\u{e0b6}', '\u{e0b4}']
+const PLAIN_CAPS: [string, string] = ['▐', '▌']
 const THEME_FILE = '.local/state/omarchy/current/theme/colors.toml'
 const THEME_POLL_MS = 2000
 const FONT_SCRIPT =
@@ -75,6 +78,8 @@ let generation = 0
 let lastPress = { key: '', at: 0 }
 let noNerd = false
 let glyphSetting = 'auto'
+let themeSetting = 'auto'
+let round = false
 let follow = true
 let followClaude = true
 let scanning: Promise<void> | null = null
@@ -1016,6 +1021,12 @@ async function feedKey($: EngineInterface, press: string, surface?: string): Pro
 }
 
 async function loadTheme($: EngineInterface): Promise<void> {
+  const preset = PRESETS[themeSetting]
+  if (preset) {
+    await $.state.set(THEME, preset)
+    themeMtime = null
+    return
+  }
   const path = `${(await $.env.get('HOME')) ?? ''}/${THEME_FILE}`
   try {
     const stat = await $.fs.stat(path)
@@ -1036,6 +1047,8 @@ function shortPath(path: string): string {
 
 export const register: Register = (on, options) => {
   glyphSetting = typeof options?.glyphs === 'string' ? options.glyphs : 'auto'
+  themeSetting = typeof options?.theme === 'string' ? options.theme : 'auto'
+  round = options?.corners === 'round'
   const activity = typeof options?.activity === 'string' ? options.activity : 'reads and writes'
   showReads = activity.includes('reads')
   showWrites = activity.includes('writes')
@@ -1289,7 +1302,18 @@ export const register: Register = (on, options) => {
     const { Box, Text, Button, Input, Client } = $.ui.resolve(e)
     const keyboard = e.surface === 'terminal'
     const t = await get($)
-    const theme: Theme = (await $.state.get(THEME)).value ?? DEFAULT_THEME
+    const theme: Theme = { ...DEFAULT_THEME, ...(await $.state.get(THEME)).value }
+    const tones = tonesOf(theme.tones)
+    const shimmer = Object.fromEntries(Object.entries(tones).map(([k, v]) => [k, { bright: v.bright, dim: v.dim }]))
+    const gitColors: Record<string, string> = {
+      ...GIT_COLOR,
+      ...(theme.added ? { A: theme.added, '?': theme.added } : {}),
+      ...(theme.renamed ? { R: theme.renamed, C: theme.renamed } : {}),
+      ...(theme.modified ? { M: theme.modified, T: theme.modified } : {}),
+    }
+    const addColor = theme.added || ADD_COLOR
+    const delColor = theme.deleted || DEL_COLOR
+    const caps = round ? (unicode ? PLAIN_CAPS : ROUND_CAPS) : undefined
     const now = await $.clock.now()
     const live = (await activities($)).filter(a => now - a.at < (a.state === 'running' ? RUNNING_MAX_MS : ACTIVITY_TTL_MS))
     const latest = [...live].reverse().find(a => a.state === 'running') ?? live[live.length - 1]
@@ -1297,9 +1321,9 @@ export const register: Register = (on, options) => {
     const dimmed = new Set(t.flashOn ? t.flashDim : [])
     const ignored = new Set(t.ignored)
     const untracked = new Set(t.untrackedDirs)
-    const width = Math.max(24, e.props.bodyColumns)
+    const width = Math.max(24, e.props.bodyColumns) - (caps ? 2 : 0)
     const rows = visibleRows(t)
-    const fixed = 2 + (t.top ? (t.branch ? 1 : 0) : 1) + (t.selected || latest ? 1 : 0)
+    const fixed = (round ? 4 : 2) + (t.top ? (t.branch ? 1 : 0) : 1) + (t.selected || latest ? 1 : 0)
     const room = Math.max(5, (e.props.scroll?.bodyRows ?? 40) - fixed)
     const isLit = (id: string) => bright.has(id) || dimmed.has(id)
     const focus = followClaude && t.flashOn ? ([...t.flash].reverse().find(id => id !== BRANCH_ROW) ?? t.cursor) : t.cursor
@@ -1325,8 +1349,8 @@ export const register: Register = (on, options) => {
     const countSegs = (c: [number, number, number] | undefined): Seg[] => {
       if (!c) return []
       const out: Seg[] = []
-      if (c[0] > 0) out.push({ t: ` ?:${c[0]}`, c: GIT_COLOR['?'] ?? ADD_COLOR })
-      if (c[1] > 0) out.push({ t: ` M:${c[1]}`, c: GIT_COLOR.M ?? '#e5c07b' })
+      if (c[0] > 0) out.push({ t: ` ?:${c[0]}`, c: gitColors['?'] ?? addColor })
+      if (c[1] > 0) out.push({ t: ` M:${c[1]}`, c: gitColors.M ?? MOD_COLOR })
       if (c[2] > 0) out.push({ t: ` D:${c[2]}`, c: theme.urgent })
       return out
     }
@@ -1338,11 +1362,11 @@ export const register: Register = (on, options) => {
       const own = t.git[n.id]
       const status = own ?? (underAny(dirname(n.id), untracked, t.root) ? '?' : undefined)
       const isIgnored = !status && underAny(n.id, ignored, t.root)
-      const gitColor = status === 'D' || status === 'U' ? theme.urgent : status ? (GIT_COLOR[status] ?? theme.muted) : undefined
+      const gitColor = status === 'D' || status === 'U' ? theme.urgent : status ? (gitColors[status] ?? theme.muted) : undefined
       const isBright = bright.has(n.id)
       const isDim = !isBright && dimmed.has(n.id)
       const tone = t.flashTones[n.id] ?? 'orange'
-      const iconColor = isIgnored ? theme.muted : (gitColor ?? (n.hidden ? theme.muted : n.kind === 'dir' ? theme.accent : theme.muted))
+      const iconColor = isIgnored ? theme.muted : (gitColor ?? (n.hidden ? theme.muted : n.kind === 'dir' ? theme.dir || theme.accent : theme.muted))
       const nameColor = isIgnored ? theme.muted : (gitColor ?? (n.hidden ? theme.muted : theme.fg || undefined))
       const loc = t.diff[n.id]
       const meta = t.showSize
@@ -1376,8 +1400,8 @@ export const register: Register = (on, options) => {
       ]
       const right: Seg[] = []
       if (meta) right.push({ t: ` ${meta}`, c: theme.muted })
-      if (loc && loc[0] > 0) right.push({ t: ` +${loc[0]}`, c: ADD_COLOR })
-      if (loc && loc[1] > 0) right.push({ t: ` -${loc[1]}`, c: DEL_COLOR })
+      if (loc && loc[0] > 0) right.push({ t: ` +${loc[0]}`, c: addColor })
+      if (loc && loc[1] > 0) right.push({ t: ` -${loc[1]}`, c: delColor })
       right.push(...dirCounts)
       if (badge) right.push({ t: badge, c: status ? gitColor : theme.muted, b: true })
       return { id: n.id, left: clean(left), right: clean(right) }
@@ -1405,12 +1429,12 @@ export const register: Register = (on, options) => {
       return (
         <Box flexDirection="row" height={1} overflow="hidden">
           <Box flexDirection="row" flexShrink={0}>
-            <Text color={isFlash ? (TONES[tone]?.solid ?? theme.accent) : theme.accent}>{(unicode ? BRANCH_ICON.plain : BRANCH_ICON.nerd) + ' '}</Text>
-            <Text bold color={isFlash ? (TONES[tone]?.solid ?? (theme.fg || undefined)) : theme.fg || undefined}>
+            <Text color={isFlash ? (tones[tone]?.solid ?? theme.accent) : theme.accent}>{(unicode ? BRANCH_ICON.plain : BRANCH_ICON.nerd) + ' '}</Text>
+            <Text bold color={isFlash ? (tones[tone]?.solid ?? (theme.fg || undefined)) : theme.fg || undefined}>
               {label}
             </Text>
-            {b.ahead > 0 && <Text color={TONES.teal?.solid}>{` ↑${b.ahead}`}</Text>}
-            {b.behind > 0 && <Text color={TONES.blue?.solid}>{` ↓${b.behind}`}</Text>}
+            {b.ahead > 0 && <Text color={tones.teal?.solid}>{` ↑${b.ahead}`}</Text>}
+            {b.behind > 0 && <Text color={tones.blue?.solid}>{` ↓${b.behind}`}</Text>}
           </Box>
           {b.upstream && (
             <Box flexShrink={1} overflow="hidden">
@@ -1421,8 +1445,8 @@ export const register: Register = (on, options) => {
           )}
           <Box flexGrow={1} />
           <Box flexDirection="row" flexShrink={0}>
-            {totals[0] > 0 && <Text color={ADD_COLOR}>{` +${totals[0]}`}</Text>}
-            {totals[1] > 0 && <Text color={DEL_COLOR}>{` -${totals[1]}`}</Text>}
+            {totals[0] > 0 && <Text color={addColor}>{` +${totals[0]}`}</Text>}
+            {totals[1] > 0 && <Text color={delColor}>{` -${totals[1]}`}</Text>}
             {rootCounts.map(c => (
               <Text color={c.c}>{c.t}</Text>
             ))}
@@ -1434,7 +1458,7 @@ export const register: Register = (on, options) => {
 
     const chip = (a: Activity) => {
       const tone = a.state === 'failed' ? 'red' : a.tone
-      const color = TONES[tone]?.solid ?? theme.accent
+      const color = tones[tone]?.solid ?? theme.accent
       const icon = unicode ? a.plain : a.nerd
       const hash = a.state === 'done' && a.kind === 'git commit' ? a.detail.split(' ')[0] ?? '' : ''
       return (
@@ -1510,7 +1534,7 @@ export const register: Register = (on, options) => {
         </Box>
         {branchRow()}
         {!t.top && <Text color={theme.muted}>{unicode ? '± ' : '\u{e702} '}no git repo · git status starts after git init</Text>}
-        <Box flexDirection="row">
+        <Box flexDirection="row" {...(round ? { borderStyle: 'round', borderColor: theme.border || theme.muted, paddingX: 1 } : {})}>
           <Box flexGrow={1}>
             <Input
               key={SEARCH}
@@ -1533,7 +1557,7 @@ export const register: Register = (on, options) => {
         <Client
           key="rows"
           module="./rows.tsx"
-          props={{ rows: specs, active: t.cursor, activeBg: theme.selection, hoverBg: faint(theme.selection), tones: SHIMMER, pointer, ...(bar ? { bar } : {}) } satisfies RowsProps}
+          props={{ rows: specs, active: t.cursor, activeBg: theme.selection, hoverBg: faint(theme.selection), tones: shimmer, pointer, ...(bar ? { bar } : {}), ...(caps ? { caps } : {}) } satisfies RowsProps}
         />
         {keyboard ? (
           // What the keyboard reaches without a click: NAV holds the focus ring (Enter opens

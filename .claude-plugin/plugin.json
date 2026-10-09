@@ -1,6 +1,6 @@
 {
   "name": "filetree",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "An IDE-style file tree for Claude Code that shows what Claude is doing and where in files",
   "types": "./types/index.d.ts",
   "author": {
@@ -35,6 +35,30 @@
         "auto",
         "nerd",
         "plain"
+      ]
+    },
+    "theme": {
+      "type": "string",
+      "title": "Theme",
+      "description": "Pane colours: auto follows Omarchy's current theme when there is one, else the built-in colours; or a named palette. The pane keeps the terminal's own background.",
+      "default": "auto",
+      "options": [
+        "auto",
+        "catppuccin-mocha",
+        "tokyo-night",
+        "dracula",
+        "nord",
+        "gruvbox"
+      ]
+    },
+    "corners": {
+      "type": "string",
+      "title": "Corners",
+      "description": "round: the cursor row is a pill with rounded ends and the search field sits in a rounded box; square: full-width row bars and a bare search field.",
+      "default": "square",
+      "options": [
+        "square",
+        "round"
       ]
     },
     "follow": {

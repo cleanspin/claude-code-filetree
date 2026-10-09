@@ -13,6 +13,12 @@ export const DEFAULT_THEME: Theme = {
   urgent: '#d0605e',
   selection: '#6b7280',
   bg: '',
+  dir: '',
+  added: '',
+  modified: '',
+  renamed: '',
+  deleted: '',
+  border: '',
 }
 
 export function emptyTree(root: string): FileTree {
@@ -51,6 +57,12 @@ export function parseTheme(toml: string): Theme {
     urgent: get('red') ?? get('color1') ?? DEFAULT_THEME.urgent,
     selection: get('selection') ?? DEFAULT_THEME.selection,
     bg: get('dark_background') ?? get('background') ?? DEFAULT_THEME.bg,
+    dir: '',
+    added: '',
+    modified: '',
+    renamed: '',
+    deleted: '',
+    border: '',
   }
 }
 

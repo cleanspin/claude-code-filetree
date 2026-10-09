@@ -11,6 +11,8 @@ export type RowsProps = {
   spinner?: string[]
   pointer?: boolean
   bar?: { pos: number; size: number; thumb: string; track: string }
+  // The ends of a highlighted row, drawn in its colour beside it; each takes a column on every row.
+  caps?: [string, string]
 }
 type Local = { hover: number; phase: number; drag: boolean; ref: { stop?: () => void; unpoint?: () => void } }
 
@@ -69,7 +71,7 @@ const Rows: ClientModule<RowsProps, Local> = (props, surface) => {
       return
     }
     if (e.type !== 'down' || (e.button ?? 'left') !== 'left' || !row) return
-    let x = 0
+    let x = props.caps ? 1 : 0
     for (const seg of row.left) {
       const w = [...seg.t].length
       if (seg.tab && e.x >= x && e.x < x + w) {
@@ -114,27 +116,42 @@ const Rows: ClientModule<RowsProps, Local> = (props, surface) => {
       </Text>
     )
   }
+  const bar = (i: number) =>
+    props.bar && (
+      <Text color={i >= props.bar.pos && i < props.bar.pos + props.bar.size ? props.bar.thumb : props.bar.track}>
+        {i >= props.bar.pos && i < props.bar.pos + props.bar.size ? '┃' : '│'}
+      </Text>
+    )
   return (
     <Box flexDirection="column">
-      {props.rows.map((r, i) => (
-        <Box
-          flexDirection="row"
-          height={1}
-          overflow="hidden"
-          backgroundColor={r.id && r.id === props.active ? props.activeBg : r.id && i === state.hover ? props.hoverBg : undefined}
-        >
+      {props.rows.map((r, i) => {
+        const bg = r.id && r.id === props.active ? props.activeBg : r.id && i === state.hover ? props.hoverBg : undefined
+        const body = [
           <Box flexShrink={1} overflow="hidden">
             {r.left.map(draw)}
+          </Box>,
+          <Box flexGrow={1} />,
+          ...r.right.map(draw),
+        ]
+        if (!props.caps) {
+          return (
+            <Box flexDirection="row" height={1} overflow="hidden" backgroundColor={bg}>
+              {body}
+              {bar(i)}
+            </Box>
+          )
+        }
+        return (
+          <Box flexDirection="row" height={1} overflow="hidden">
+            <Text color={bg}>{bg ? props.caps[0] : ' '}</Text>
+            <Box flexDirection="row" flexGrow={1} overflow="hidden" backgroundColor={bg}>
+              {body}
+            </Box>
+            <Text color={bg}>{bg ? props.caps[1] : ' '}</Text>
+            {bar(i)}
           </Box>
-          <Box flexGrow={1} />
-          {r.right.map(draw)}
-          {props.bar && (
-            <Text color={i >= props.bar.pos && i < props.bar.pos + props.bar.size ? props.bar.thumb : props.bar.track}>
-              {i >= props.bar.pos && i < props.bar.pos + props.bar.size ? '┃' : '│'}
-            </Text>
-          )}
-        </Box>
-      ))}
+        )
+      })}
     </Box>
   )
 }

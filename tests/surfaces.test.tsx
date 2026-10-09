@@ -965,3 +965,47 @@ test('vim keys: options rebind the tree keys and turn the global hotkeys off', {
   expect(await active()).toBe(`${root}/b.txt`)
   await ui.unmount()
 })
+
+test('theme and corners options: a named palette colours the tree, the cursor row gets rounded ends', { timeoutMs: 20_000, options: { theme: 'catppuccin-mocha', corners: 'round', glyphs: 'nerd' } }, async ($, on) => {
+  const ran: Ran = []
+  const root = '/home/k/proj'
+  const clock = world(on, {
+    os: 'linux', env: { HOME: '/home/k' }, cwd: root, top: root,
+    dirs: { [root]: [['src', 'dir'], ['notes.md', 'file']], [`${root}/src`]: [['a.ts', 'file']] },
+    status: '## main\0 M notes.md\0', numstat: '2\t1\tnotes.md\0',
+  }, ran)
+  await $.session.start({ cwd: root, surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: paneProps(60) })
+  await clock.settle()
+  await ui.post({ press: `${root}/notes.md` }, { in: 'rows' })
+  await clock.settle()
+  const shown = await texts(ui)
+  expect(ran.filter(a => a[0] === 'theme-stat').length).toBe(0)
+  expect(shown).toContain('"borderStyle":"round"')
+  expect(shown).toContain('"color":"#89b4fa"')
+  expect(shown).toContain('"color":"#f9e2af"')
+  expect(shown).toContain('"color":"#a6e3a1"')
+  expect(shown).toContain('"backgroundColor":"#45475a"')
+  expect(shown).toContain('\u{e0b6}')
+  expect(shown).toContain('\u{e0b4}')
+  expect(shown).not.toContain('#5b9bd5')
+  await ui.unmount()
+})
+
+test('by default the tree keeps square row bars and a bare search field', { timeoutMs: 20_000, options: { glyphs: 'nerd' } }, async ($, on) => {
+  const ran: Ran = []
+  const root = '/home/k/proj'
+  const clock = world(on, { os: 'linux', env: { HOME: '/home/k' }, cwd: root, top: '', dirs: { [root]: [['a.ts', 'file'], ['b.ts', 'file']] }, status: '', numstat: '' }, ran)
+  await $.session.start({ cwd: root, surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: paneProps(60) })
+  await clock.settle()
+  await ui.post({ press: `${root}/a.ts` }, { in: 'rows' })
+  await clock.settle()
+  const shown = await texts(ui)
+  expect(shown).not.toContain('"borderStyle"')
+  expect(shown).not.toContain('\u{e0b6}')
+  expect(shown).toContain('"backgroundColor":"#6b7280"')
+  await ui.unmount()
+})

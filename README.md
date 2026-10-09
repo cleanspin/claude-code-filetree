@@ -6,7 +6,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Claude_Code-%E2%89%A5_2.1.295-D97757?logo=claude&logoColor=fff" alt="Claude Code 2.1.295 or newer">
-  <img src="https://img.shields.io/badge/version-0.3.0-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.3.1-blue" alt="Version">
   <img src="https://img.shields.io/badge/type-mod-6f42c1" alt="Claude Code mod">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
 </p>
@@ -61,7 +61,7 @@ Installed it as `filetree@filetree` before the repository was renamed? Nothing t
 - Click to select, arrow keys or [vim keys](#moving-through-the-tree) to move through the tree, and [hotkeys](#show-hide-and-focus-the-tree-from-anywhere) to show, hide and focus it
 - Light on large repos: outside a repo it only checks once whether one exists, and every git call is scoped to the cwd
 - Nerd Font icons with a plain Unicode fallback
-- On Omarchy, the pane takes its colors and background from the current theme and follows theme switches
+- On Omarchy, the pane takes its colors and background from the current theme and follows theme switches; elsewhere, pick a [theme](#settings) and rounded corners
 
 ### Resizing the pane
 
@@ -139,6 +139,8 @@ All settings are in `/config` under filetree.
 - **Follow Claude:** `on` (default) scrolls the tree to what Claude reads, writes or commits; `off` keeps the view where you put it, and highlights still show.
 - **Right column:** `date` (default) or `size`; what the right column shows when a session starts. The `Σ` button in the header toggles it.
 - **Glyphs:** `auto` (default) uses Nerd Font icons when a Nerd Font is installed and your terminal started after it was installed, plain Unicode in the desktop app, and Nerd Font over SSH. `nerd` or `plain` forces one.
+- **Theme:** `auto` (default) follows Omarchy's current theme when there is one, else the built-in colors; `catppuccin-mocha`, `tokyo-night`, `dracula`, `nord` or `gruvbox` colors the tree, git status, line counts and activity shimmer in that palette. The pane keeps your terminal's background either way.
+- **Corners:** `square` (default) or `round`: the cursor row becomes a pill with rounded ends (half blocks with plain glyphs) and the search field sits in a rounded box.
 - **Tree keys:** overrides for the keys inside the tree; see [Moving through the tree](#moving-through-the-tree).
 - **Show/hide action** and **Focus action:** the keybinding actions behind the global hotkeys, `diff:back` and `diff:nextSource` by default; see [Keyboard](#keyboard).
 

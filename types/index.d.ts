@@ -53,6 +53,7 @@ export type FileTree = {
   scroll: number | null
 }
 
+// An empty colour falls back to the built-in one; `tones` recolours the activity shimmer by tone name.
 export type Theme = {
   fg: string
   accent: string
@@ -60,6 +61,13 @@ export type Theme = {
   urgent: string
   selection: string
   bg: string
+  dir: string
+  added: string
+  modified: string
+  renamed: string
+  deleted: string
+  border: string
+  tones?: Record<string, string>
 }
 
 declare module 'claude-code' {

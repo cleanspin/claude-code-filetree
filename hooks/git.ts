@@ -34,6 +34,32 @@ export const TONES: Record<string, { bright: string[]; dim: string[]; solid: str
   red: { bright: ['#ef4444', '#f87171', '#fca5a5', '#fee2e2'], dim: ['#7f1d1d', '#991b1b', '#b54040', '#c96a6a'], solid: '#f87171' },
 }
 
+function mix(hex: string, to: number, amount: number): string {
+  const v = parseInt(hex.slice(1), 16)
+  const ch = (shift: number) => Math.round(((v >> shift) & 255) + (to - ((v >> shift) & 255)) * amount)
+  return `#${[16, 8, 0].map(x => ch(x).toString(16).padStart(2, '0')).join('')}`
+}
+
+// A theme's tones by name, each shimmer ramp derived from its one colour: lighter toward the
+// band's middle, darker for the dimmed rows. Tones the theme leaves out keep the built-in ones.
+export function tonesOf(solids?: Record<string, string>): typeof TONES {
+  if (!solids) return TONES
+  return Object.fromEntries(
+    Object.entries(TONES).map(([name, tone]) => {
+      const solid = solids[name]
+      if (!solid) return [name, tone]
+      return [
+        name,
+        {
+          bright: [solid, mix(solid, 255, 0.3), mix(solid, 255, 0.6), mix(solid, 255, 0.88)],
+          dim: [mix(solid, 0, 0.62), mix(solid, 0, 0.5), mix(solid, 0, 0.36), mix(solid, 0, 0.22)],
+          solid,
+        },
+      ]
+    }),
+  )
+}
+
 const GIT_VERBS: Record<string, Omit<GitAction, 'kind'>> = {
   commit: { verb: 'commit', running: 'committing', done: 'committed', tone: 'green', icon: ICON.commit },
   push: { verb: 'push', running: 'pushing', done: 'pushed', tone: 'teal', icon: ICON.push },
