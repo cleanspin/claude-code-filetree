@@ -80,7 +80,7 @@ const Rows: ClientModule<RowsProps, Local> = (props, surface) => {
     }
     if (row.id) surface.post({ press: row.id, ctrl: Boolean(e.ctrl), shift: Boolean(e.shift) })
   })
-  surface.onKey(e => surface.post({ key: e.key, ctrl: Boolean(e.ctrl), shift: Boolean(e.shift) }))
+  surface.onKey(e => surface.post({ key: e.key, ctrl: Boolean(e.ctrl), shift: Boolean(e.shift), meta: Boolean(e.meta) }))
   const frames = props.spinner?.length ? props.spinner : FRAMES
   const draw = (s: Seg) => {
     if (s.spin) {

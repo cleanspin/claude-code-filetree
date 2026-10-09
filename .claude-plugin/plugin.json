@@ -1,6 +1,6 @@
 {
   "name": "filetree",
-  "version": "0.2.24",
+  "version": "0.3.0",
   "description": "An IDE-style file tree for Claude Code that shows what Claude is doing and where in files",
   "types": "./types/index.d.ts",
   "author": {
@@ -56,6 +56,24 @@
         "date",
         "size"
       ]
+    },
+    "keys": {
+      "type": "string",
+      "title": "Tree keys",
+      "description": "Overrides for the keys inside the tree, as command=key,key pairs separated by ; (e.g. top=g g,home; hide=q,x). Commands: down up halfPageDown halfPageUp pageDown pageUp top bottom expand collapse open toggle parent search copyPath copyAbsolutePath refresh toggleHidden toggleSize collapseAll hide. Empty keeps the defaults.",
+      "default": ""
+    },
+    "toggleAction": {
+      "type": "string",
+      "title": "Show/hide action",
+      "description": "The Claude Code keybinding action that shows and hides the tree; bind a key to it in ~/.claude/keybindings.json (Global context). Use an action Claude Code is not handling at the time; empty turns it off.",
+      "default": "diff:back"
+    },
+    "focusAction": {
+      "type": "string",
+      "title": "Focus action",
+      "description": "The Claude Code keybinding action that opens the tree and gives it the keyboard; bind a key to it in ~/.claude/keybindings.json (Global context). Empty turns it off.",
+      "default": "diff:nextSource"
     }
   },
   "license": "MIT"

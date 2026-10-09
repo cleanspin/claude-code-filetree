@@ -68,6 +68,7 @@ declare module 'claude-code' {
       tree: FileTree
       theme: Theme
       activity: Activity[]
+      hidden: boolean
     }
   }
 }

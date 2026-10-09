@@ -411,7 +411,7 @@ test('sidebar only: no pane in the default layout, and an inline pane closes its
   const closed: unknown[] = []
   on('ui.close', (_$: any, e: any) => {
     closed.push(e)
-    return {}
+    return { value: undefined }
   })
   await $.session.start({ cwd: root, surface: 'terminal', isInteractive: true })
   await clock.settle()
@@ -846,3 +846,122 @@ for (const os of ['linux', 'win32'] as const) {
     await ui.unmount()
   })
 }
+
+test('vim keys: pane hotkeys and clicked-tree keys run the keymap, Enter opens, / searches', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const root = '/home/k/proj'
+  const clock = world(on, {
+    os: 'linux', env: { HOME: '/home/k' }, cwd: root, top: '',
+    dirs: { [root]: [['src', 'dir'], ['a.txt', 'file'], ['b.txt', 'file'], ['c.txt', 'file']], [`${root}/src`]: [['x.ts', 'file']] },
+    status: '', numstat: '',
+  }, ran)
+  await $.session.start({ cwd: root, surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: paneProps(60) })
+  await clock.settle()
+  const active = async () => ((await ui.drawn()) as any).children.find((c: any) => c.type === 'Client').props.props.active
+  const key = async (k: string) => {
+    await ui.press({ key: `key-${k}` })
+    await clock.settle()
+  }
+  const post = async (k: string, mods: { shift?: boolean; ctrl?: boolean } = {}) => {
+    await ui.post({ key: k, ...mods }, { in: 'rows' })
+    await clock.settle()
+  }
+  expect(await ui.find({ key: 'nav' })).toBeDefined()
+  expect(await ui.find({ key: 'key-G' })).toBeUndefined()
+  await key('g')
+  await key('g')
+  expect(await active()).toBe(`${root}/src`)
+  await key('j')
+  expect(await active()).toBe(`${root}/a.txt`)
+  await key('g')
+  await key('e')
+  expect(await active()).toBe(`${root}/c.txt`)
+  await key('k')
+  expect(await active()).toBe(`${root}/b.txt`)
+  await post('g')
+  await post('g')
+  expect(await active()).toBe(`${root}/src`)
+  await key('l')
+  expect(JSON.stringify(await ui.drawn({ in: 'rows' }))).toContain('x.ts')
+  await key('j')
+  expect(await active()).toBe(`${root}/src/x.ts`)
+  await key('p')
+  expect(await active()).toBe(`${root}/src`)
+  await key('h')
+  expect(JSON.stringify(await ui.drawn({ in: 'rows' }))).not.toContain('x.ts')
+  await post('g', { shift: true })
+  expect(await active()).toBe(`${root}/c.txt`)
+  await ui.press({ key: 'nav' })
+  await clock.settle()
+  expect(ran.some(a => a.includes(`${root}/c.txt`))).toBe(true)
+  await key('s')
+  expect(((await ui.find({ key: 'q' })) as any)?.props.autoFocus).toBeUndefined()
+  await ui.unmount()
+})
+
+test('vim keys: the hidden band buttons show, hide and focus the tree, and a hidden tree stays hidden', { timeoutMs: 20_000 }, async ($, on) => {
+  const ran: Ran = []
+  const root = '/home/k/proj'
+  const clock = world(on, { os: 'linux', env: { HOME: '/home/k' }, cwd: root, top: '', dirs: { [root]: [['a.txt', 'file']], '/home/k/other': [['b.txt', 'file']] }, status: '', numstat: '' }, ran)
+  let closedAt = opens.length
+  const isOpen = () => opens.length > closedAt
+  on('ui.close', () => {
+    closedAt = opens.length
+    return { value: undefined }
+  })
+  on('ui.panes', () => ({ value: isOpen() ? [{ id: 'filetree', title: 'Files', isShown: true, isFocused: false, isPlaced: true }] : [] }))
+  on('classic.SessionStart', () => ({}))
+  on('ui.render', ($: any, e: any) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>another band</Text>
+  })
+  await $.session.start({ cwd: root, surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  expect(isOpen()).toBe(true)
+  const band = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 80, scroll: { offset: 0, bodyRows: 10 }, view: {} } as any })
+  await clock.settle()
+  expect(JSON.stringify(await band.drawn())).toContain('another band')
+  const toggle = await band.find({ key: 'toggle-tree' })
+  expect((toggle as any)?.props.action).toBe('diff:back')
+  expect(((await band.find({ key: 'focus-tree' })) as any)?.props.action).toBe('diff:nextSource')
+  await band.press({ key: 'toggle-tree' })
+  await clock.settle()
+  expect(isOpen()).toBe(false)
+  await $.command.run({ command: 'filetree', args: '/home/k/other', origin: { kind: 'person' }, presentation: { isFullscreen: true, columns: 200 } } as any)
+  await clock.settle()
+  expect(isOpen()).toBe(true)
+  await band.press({ key: 'toggle-tree' })
+  await clock.settle()
+  expect(isOpen()).toBe(false)
+  await $.classic.SessionStart({ source: 'clear', cwd: root } as any)
+  await clock.settle()
+  expect(isOpen()).toBe(false)
+  await band.press({ key: 'focus-tree' })
+  await clock.settle()
+  expect(isOpen()).toBe(true)
+  expect((opens.at(-1) as any).focus).toBe(true)
+  await band.unmount()
+})
+
+test('vim keys: options rebind the tree keys and turn the global hotkeys off', { timeoutMs: 20_000, options: { keys: 'down=n; bottom=z', toggleAction: '', focusAction: '' } }, async ($, on) => {
+  const ran: Ran = []
+  const root = '/home/k/proj'
+  const clock = world(on, { os: 'linux', env: { HOME: '/home/k' }, cwd: root, top: '', dirs: { [root]: [['a.txt', 'file'], ['b.txt', 'file'], ['c.txt', 'file']] }, status: '', numstat: '' }, ran)
+  await $.session.start({ cwd: root, surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetree', surface: 'terminal', component: 'Pane', requestId: 'filetree', props: paneProps(60) })
+  await clock.settle()
+  const active = async () => ((await ui.drawn()) as any).children.find((c: any) => c.type === 'Client').props.props.active
+  expect(await ui.find({ key: 'key-j' })).toBeUndefined()
+  expect(await ui.find({ key: 'toggle-tree' })).toBeUndefined()
+  await ui.press({ key: 'key-z' })
+  await clock.settle()
+  expect(await active()).toBe(`${root}/c.txt`)
+  await ui.post({ key: 'home' }, { in: 'rows' })
+  await ui.press({ key: 'key-n' })
+  await clock.settle()
+  expect(await active()).toBe(`${root}/b.txt`)
+  await ui.unmount()
+})

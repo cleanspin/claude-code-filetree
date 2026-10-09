@@ -5,6 +5,7 @@ import type { Activity, FileNode, FileTree, Theme } from '../types'
 import { BRANCH_ICON, chainOf, type GitAction, gitActions, readOnly, readTargets, resolve, TONES } from './git'
 import type { RowSpec, RowsProps, Seg } from './rows'
 import { CHEVRON_CLOSED, CHEVRON_OPEN, fileIcon, GIT_COLOR } from './icons'
+import { actionOption, type Command, createReader, DEFAULT_KEYMAP, hotkeysOf, type Keymap, parseKeymap, pressOf, type Reader } from './keymap'
 import {
   ancestorsOf,
   type Change,
@@ -35,7 +36,10 @@ import {
 const TREE = { plugin: 'filetree', key: 'tree' } as const
 const THEME = { plugin: 'filetree', key: 'theme' } as const
 const ACTIVITY = { plugin: 'filetree', key: 'activity' } as const
+const HIDDEN = { plugin: 'filetree', key: 'hidden' } as const
 const PANE = 'filetree'
+const NAV = 'nav'
+const SEARCH = 'q'
 const SHIMMER = Object.fromEntries(Object.entries(TONES).map(([k, v]) => [k, { bright: v.bright, dim: v.dim }]))
 const BRANCH_ROW = '#branch'
 const FLASH_MS = 2700
@@ -83,7 +87,7 @@ let showWrites = true
 let searchIndex: { root: string; paths: Promise<string[]> } | null = null
 let activityId = 0
 let pointer = true
-let view = { from: 0, max: 0 }
+let view = { from: 0, max: 0, room: 20 }
 let lastSync = 0
 let noDock = false
 let home = ''
@@ -93,6 +97,12 @@ let markId = 0
 let listSeq = 0
 let lastRoot = ''
 let sizeDefault = false
+let keymap: Keymap = DEFAULT_KEYMAP
+let keyErrors: string[] = []
+let reader: Reader = createReader(keymap)
+let hotkeys: string[] = hotkeysOf(keymap)
+let toggleAction = ''
+let focusAction = ''
 let sizeEpoch = 0
 let sizeActive = 0
 let sizeQueue: string[] = []
@@ -271,9 +281,9 @@ async function reset($: EngineInterface, root: string, focus = false): Promise<v
   sizeEpoch += 1
   sizeQueue = []
   await put($, () => ({ ...emptyTree(root), showHidden: prev.showHidden, showSize: prev.root ? prev.showSize : sizeDefault }))
-  const title = `Files: ${root.split('/').pop() || root}`
+  const title = titleOf(root)
   if (focus) await $.ui.open({ id: PANE, title, focus: true })
-  else if (!noDock) await $.ui.open({ id: PANE, title })
+  else if (!noDock && !(await isHidden($))) await $.ui.open({ id: PANE, title })
   await loadDirs($, [root])
   await detectRepo($)
   await refreshGit($)
@@ -907,6 +917,104 @@ async function openNode($: EngineInterface, n: FileNode): Promise<void> {
   } else await openFile($, n.id)
 }
 
+function titleOf(root: string): string {
+  return `Files: ${root.split('/').pop() || root}`
+}
+
+async function isHidden($: EngineInterface): Promise<boolean> {
+  return (await $.state.get(HIDDEN)).value ?? false
+}
+
+async function showPane($: EngineInterface, focus: boolean): Promise<void> {
+  noDock = false
+  await update($, HIDDEN, () => false)
+  const t = await get($)
+  if (!t.root || t.nodes.length === 0) await reset($, await cwdOf($), focus)
+  else await $.ui.open({ id: PANE, title: titleOf(t.root), ...(focus ? { focus: true as const } : {}) })
+  if (focus) await $.ui.focus({ requestId: PANE, key: NAV }).catch(() => undefined)
+}
+
+async function hidePane($: EngineInterface): Promise<void> {
+  await update($, HIDDEN, () => true)
+  await $.ui.close({ id: PANE })
+}
+
+async function togglePane($: EngineInterface): Promise<void> {
+  if ((await $.ui.panes()).some(p => p.id === PANE)) await hidePane($)
+  else await showPane($, false)
+}
+
+function needsSidebar($: EngineInterface): void {
+  $.ui.toast('filetree shows in the sidebar, which needs the fullscreen layout: run /tui fullscreen')
+}
+
+async function refreshTree($: EngineInterface): Promise<void> {
+  const cur = await get($)
+  searchIndex = null
+  await staleSizes($)
+  await loadDirs($, [cur.root, ...cur.expanded])
+  await detectRepo($)
+  await refreshGit($)
+  if (cur.query.trim()) await search($, cur.query)
+}
+
+function collapseAll($: EngineInterface): Promise<void> {
+  return patch($, cur => ({ expanded: [], nodes: dropBelow(cur.nodes, cur.nodes.filter(x => x.parent === cur.root && x.kind === 'dir').map(x => x.id)) }))
+}
+
+async function runCommand($: EngineInterface, command: Command, surface?: string): Promise<void> {
+  const t = await get($)
+  const rows = visibleRows(t)
+  const at = rows.findIndex(r => r.node.id === t.cursor)
+  const cur = rows[at]?.node
+  const move = async (d: number) => {
+    const target = rows[Math.max(0, Math.min(rows.length - 1, (at < 0 ? 0 : at) + d))]
+    if (target) await patch($, () => ({ cursor: target.node.id, scroll: null }))
+  }
+  const page = Math.max(1, view.room - 1)
+  const half = Math.max(1, Math.floor(view.room / 2))
+  switch (command) {
+    case 'down': return move(1)
+    case 'up': return move(-1)
+    case 'halfPageDown': return move(half)
+    case 'halfPageUp': return move(-half)
+    case 'pageDown': return move(page)
+    case 'pageUp': return move(-page)
+    case 'top': return move(-rows.length)
+    case 'bottom': return move(rows.length)
+    case 'search':
+      await $.ui.focus({ requestId: PANE, key: SEARCH }).catch(() => undefined)
+      return
+    case 'refresh': return refreshTree($)
+    case 'toggleHidden': return patch($, c => ({ showHidden: !c.showHidden }))
+    case 'toggleSize': return patch($, c => ({ showSize: !c.showSize }))
+    case 'collapseAll': return collapseAll($)
+    case 'hide': return hidePane($)
+  }
+  if (!cur) return
+  switch (command) {
+    case 'expand':
+      if (cur.kind === 'dir' && !t.expanded.includes(cur.id)) await toggle($, cur)
+      return
+    case 'collapse':
+      if (cur.kind === 'dir' && t.expanded.includes(cur.id)) await toggle($, cur)
+      else if (cur.parent !== t.root) await patch($, () => ({ cursor: cur.parent }))
+      return
+    case 'parent':
+      if (cur.parent !== t.root) await patch($, () => ({ cursor: cur.parent, scroll: null }))
+      return
+    case 'open': return cur.kind !== 'dir' ? openNode($, cur) : toggle($, cur)
+    case 'toggle': return toggle($, cur)
+    case 'copyPath': return copyPath($, cur.id, false, surface)
+    case 'copyAbsolutePath': return copyPath($, cur.id, true, surface)
+  }
+}
+
+async function feedKey($: EngineInterface, press: string, surface?: string): Promise<void> {
+  const command = reader.feed(press, await $.clock.now())
+  if (command) await runCommand($, command, surface)
+}
+
 async function loadTheme($: EngineInterface): Promise<void> {
   const path = `${(await $.env.get('HOME')) ?? ''}/${THEME_FILE}`
   try {
@@ -933,8 +1041,16 @@ export const register: Register = (on, options) => {
   showWrites = activity.includes('writes')
   followClaude = options?.follow !== 'off'
   sizeDefault = options?.column === 'size'
+  const keys = parseKeymap(typeof options?.keys === 'string' ? options.keys : '')
+  keymap = keys.keymap
+  keyErrors = keys.errors
+  reader = createReader(keymap)
+  hotkeys = hotkeysOf(keymap)
+  toggleAction = actionOption(options?.toggleAction, 'diff:back')
+  focusAction = actionOption(options?.focusAction, 'diff:nextSource')
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'filetree', description: 'Show the file tree; args: [path] (no path = cwd)' })
+    if (keyErrors.length) $.ui.toast(`filetree keys: ${keyErrors.join('; ')}`)
     const windows = (await $.env.get('OS')) === 'Windows_NT'
     useDrives(windows)
     home = posix(((await $.env.get('HOME')) || (await $.env.get('USERPROFILE')) || '').replace(/[\\/]+$/, ''))
@@ -955,7 +1071,7 @@ export const register: Register = (on, options) => {
       await setActivities($, cur => cur.map(a => (a.state === 'running' ? { ...a, state: 'failed', label: `${a.kind} interrupted` } : a)))
       const cwd = await cwdOf($)
       if (!t.root || t.nodes.length === 0 || (follow && t.root !== cwd)) await reset($, cwd)
-      else if (!noDock) await $.ui.open({ id: PANE, title: `Files: ${t.root.split('/').pop() || t.root}` })
+      else if (!noDock && !(await isHidden($))) await $.ui.open({ id: PANE, title: titleOf(t.root) })
     })()
     return next(e)
   })
@@ -964,6 +1080,7 @@ export const register: Register = (on, options) => {
     if (!e.presentation.isFullscreen) return { text: 'filetree shows in the sidebar, which needs the fullscreen layout. Run /tui fullscreen, then /filetree.' }
     if (e.presentation.columns < 110) return { text: 'filetree shows in the sidebar, which needs a terminal at least 110 columns wide. Widen it, then run /filetree.' }
     noDock = false
+    await update($, HIDDEN, () => false)
     const arg = (e.args ?? '').trim()
     const cwd = await cwdOf($)
     follow = !arg
@@ -1031,7 +1148,7 @@ export const register: Register = (on, options) => {
 
   on('ui.message', async ($, e, next) => {
     if (e.requestId !== PANE || e.element !== 'rows' || !e.data || typeof e.data !== 'object') return next(e)
-    const data = e.data as { press?: unknown; key?: unknown; ctrl?: unknown; shift?: unknown; scrollTo?: unknown; copy?: unknown }
+    const data = e.data as { press?: unknown; key?: unknown; ctrl?: unknown; shift?: unknown; meta?: unknown; scrollTo?: unknown; copy?: unknown }
     void sync($)
     const t = await get($)
     if (typeof data.copy === 'string') {
@@ -1052,27 +1169,40 @@ export const register: Register = (on, options) => {
       return {}
     }
     if (typeof data.key !== 'string') return {}
-    const rows = visibleRows(t)
-    const at = rows.findIndex(r => r.node.id === t.cursor)
-    const cur = rows[at]?.node
-    const move = (d: number) => {
-      const target = rows[Math.max(0, Math.min(rows.length - 1, (at < 0 ? 0 : at) + d))]
-      return target ? patch($, () => ({ cursor: target.node.id, scroll: null })) : Promise.resolve()
-    }
-    if (data.key === 'up' || data.key === 'k') await move(-1)
-    else if (data.key === 'down' || data.key === 'j') await move(1)
-    else if (data.key === 'pageup') await move(-10)
-    else if (data.key === 'pagedown') await move(10)
-    else if (data.key === 'home') await move(-rows.length)
-    else if (data.key === 'end') await move(rows.length)
-    else if (cur && (data.key === 'y' || data.key === 'Y')) await copyPath($, cur.id, data.key === 'Y' || Boolean(data.shift), e.surface)
-    else if (cur && (data.key === 'right' || data.key === 'l') && cur.kind === 'dir' && !t.expanded.includes(cur.id)) await toggle($, cur)
-    else if (cur && (data.key === 'left' || data.key === 'h')) {
-      if (cur.kind === 'dir' && t.expanded.includes(cur.id)) await toggle($, cur)
-      else if (cur.parent !== t.root) await patch($, () => ({ cursor: cur.parent }))
-    } else if (cur && data.key === 'return') await (cur.kind !== 'dir' ? openNode($, cur) : toggle($, cur))
-    else if (cur && data.key === ' ') await toggle($, cur)
+    await feedKey($, pressOf({ key: data.key, ctrl: Boolean(data.ctrl), shift: Boolean(data.shift), meta: Boolean(data.meta) }), e.surface)
     return {}
+  })
+
+  // Tab walks every element drawn, the hidden ones too: a stop on one of those (where Enter
+  // would hide the tree or feed a key) lands on the search field instead.
+  on('ui.focus', { requestId: PANE }, ($, e, next) => {
+    const hidden = e.element && e.element !== NAV && (e.element.startsWith('key-') || e.element === 'toggle-tree' || e.element === 'focus-tree')
+    return next(hidden ? { ...e, element: SEARCH } : e)
+  })
+
+  on('ui.close', async ($, e, next) => {
+    const result = await next(e)
+    if (e.id === PANE && e.origin.kind === 'person') await update($, HIDDEN, () => true)
+    return result
+  })
+
+  // The show/hide and focus hotkeys: Buttons the person never sees, pressed by whatever
+  // key they bound to `toggleAction` / `focusAction` in keybindings.json. They live in the
+  // band above the prompt so they still answer while the pane is closed.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.surface !== 'terminal' || e.props.hasSurvey || (!toggleAction && !focusAction)) return next(e)
+    const below = await next(e)
+    const { Box, Button } = $.ui.resolve(e)
+    const docks = e.viewport?.isFullscreen !== false
+    return (
+      <Box flexDirection="column">
+        {below}
+        <Box display="none">
+          {toggleAction ? <Button key="toggle-tree" label="toggle tree" action={toggleAction} onPress={() => void (docks ? togglePane($) : needsSidebar($))} /> : null}
+          {focusAction ? <Button key="focus-tree" label="focus tree" action={focusAction} onPress={() => void (docks ? showPane($, true) : needsSidebar($))} /> : null}
+        </Box>
+      </Box>
+    )
   })
 
   on('classic.SessionStart', async ($, e, next) => {
@@ -1157,6 +1287,7 @@ export const register: Register = (on, options) => {
     }
     const unicode = glyphSetting === 'plain' || (glyphSetting === 'auto' && (noNerd || e.surface === 'desktop'))
     const { Box, Text, Button, Input, Client } = $.ui.resolve(e)
+    const keyboard = e.surface === 'terminal'
     const t = await get($)
     const theme: Theme = (await $.state.get(THEME)).value ?? DEFAULT_THEME
     const now = await $.clock.now()
@@ -1187,7 +1318,7 @@ export const register: Register = (on, options) => {
       from = Math.max(0, Math.min(t.scroll, max))
       pinned = []
     }
-    view = { from, max }
+    view = { from, max, room }
     const shown = rows.slice(from, from + room - pinned.length)
     if (t.showSize) wantSizes($, [...pinned, ...shown].filter(r => r.node.kind === 'dir' && !(r.node.id in t.dirSizes)).map(r => r.node.id))
     const totals: [number, number] = t.top ? (t.diff[t.root] ?? [0, 0]) : [0, 0]
@@ -1354,17 +1485,7 @@ export const register: Register = (on, options) => {
               plain
               dimColor
               label={unicode ? '↻' : '\u{f0450}'}
-              onPress={() =>
-                void (async () => {
-                  const cur = await get($)
-                  searchIndex = null
-                  await staleSizes($)
-                  await loadDirs($, [cur.root, ...cur.expanded])
-                  await detectRepo($)
-                  await refreshGit($)
-                  if (cur.query.trim()) await search($, cur.query)
-                })()
-              }
+              onPress={() => void refreshTree($)}
             />
             <Button
               key="hidden"
@@ -1380,7 +1501,7 @@ export const register: Register = (on, options) => {
               label={unicode ? 'Σ' : '\u{f02ca}'}
               onPress={() => void patch($, cur => ({ showSize: !cur.showSize }))}
             />
-            <Button key="collapse" plain dimColor label={unicode ? '⊟' : '\u{eac5}'} onPress={() => void patch($, cur => ({ expanded: [], nodes: dropBelow(cur.nodes, cur.nodes.filter(x => x.parent === cur.root && x.kind === 'dir').map(x => x.id)) }))} />
+            <Button key="collapse" plain dimColor label={unicode ? '⊟' : '\u{eac5}'} onPress={() => void collapseAll($)} />
             {t.selected && (
               <Button key="unselect" plain label={unicode ? '⊘' : '\u{f0777}'} onPress={() => void patch($, () => ({ selected: '' }))} />
             )}
@@ -1392,14 +1513,19 @@ export const register: Register = (on, options) => {
         <Box flexDirection="row">
           <Box flexGrow={1}>
             <Input
-              key="q"
+              key={SEARCH}
               label="/ "
               placeholder="search"
               submitLabel="jump"
-              autoFocus
+              {...(keyboard ? {} : { autoFocus: true as const })}
               value={t.query}
               onInput={(v: string) => void search($, v)}
-              onSubmit={(v: string) => void jump($, v)}
+              onSubmit={(v: string) =>
+                void (async () => {
+                  await jump($, v)
+                  if (keyboard) await $.ui.focus({ requestId: PANE, key: NAV }).catch(() => undefined)
+                })()
+              }
             />
           </Box>
           {t.query ? <Button key="clear" plain dimColor label={unicode ? '×' : '\u{f0156}'} onPress={() => void search($, '')} /> : null}
@@ -1409,6 +1535,19 @@ export const register: Register = (on, options) => {
           module="./rows.tsx"
           props={{ rows: specs, active: t.cursor, activeBg: theme.selection, hoverBg: faint(theme.selection), tones: SHIMMER, pointer, ...(bar ? { bar } : {}) } satisfies RowsProps}
         />
+        {keyboard ? (
+          // What the keyboard reaches without a click: NAV holds the focus ring (Enter opens
+          // the row under the cursor), each letter or digit of the keymap is a hotkey, and the
+          // two actions answer the person's show/hide and focus keys while the pane is focused.
+          <Box display="none">
+            <Button key={NAV} label="open" autoFocus onPress={() => void runCommand($, 'open', e.surface)} />
+            {toggleAction ? <Button key="toggle-tree" label="hide tree" action={toggleAction} onPress={() => void hidePane($)} /> : null}
+            {focusAction ? <Button key="focus-tree" label="focus tree" action={focusAction} onPress={() => void showPane($, true)} /> : null}
+            {hotkeys.map(k => (
+              <Button key={`key-${k}`} label={k} hotkey={k} onPress={() => void feedKey($, k, e.surface)} />
+            ))}
+          </Box>
+        ) : null}
         <Box flexGrow={1} />
         {(t.selected || latest) && (
           <Box flexDirection="row">
